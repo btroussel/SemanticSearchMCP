@@ -2,24 +2,33 @@
 
 A native SwiftUI app, menu-bar shortcut, and shared local EmbeddingGemma 2 service. It starts with **no authorized folders** and has no dependency on a particular repository.
 
-## Build and open
+## Install and first launch
 
-```sh
-uv sync --extra dev
-.venv/bin/python scripts/build-mac-app.py
-open '.code-search/Local Search.app'
-```
+Install from the release disk image or build the app as described in the [README](../README.md#install). On first launch, the setup screen lists the **search engine** and the **EmbeddingGemma 2 model**. **Install** then:
 
-Choose **Ajouter un dossier**, select a folder in the Mac chooser, and authorize code, documents, and/or images. Exclusion patterns follow Git ignore syntax, one per line. Ordinary folders and Git repositories are supported. Saved changes are watched and reconciled every five minutes. The index persists across restarts.
+1. runs the bundled [uv](https://docs.astral.sh/uv/) to download Python 3.12 into `runtime/python/` and install the hash-locked libraries and the Local Search backend into `runtime/venv/` (about 1.4 GB);
+2. runs `code-search download-model` to fetch the pinned model revision into `models/embeddinggemma-2/` (1.5 GB), verifying every file's SHA-256.
 
-Select a sidebar source to restrict search, choose a result-type filter, and describe what you need. Return starts a search; Command-K focuses the field. Select a result for a text/image preview; the Finder button reveals the original file. Choose **Gérer l’accès** to inspect a selected source, its exclusions and unreadable files, or revoke access. A right-click on a source also exposes these controls.
+Both paths are under `~/Library/Application Support/Local Search/`. Progress, **Cancel** and **Show log** (`setup.log`) are available during setup. A cancelled or interrupted model download resumes; the engine is installed into a staging folder and only replaces the previous one once complete. **Use a folder I already have…** selects an existing checkpoint containing `config.json`, `model.safetensors` and `tokenizer.json` instead of downloading.
+
+When a new app version bundles a different backend or library lock, the setup screen offers **Update** and reinstalls the engine, reusing the uv download cache. A development build made with `scripts/build-mac-app.py --dev` skips setup and uses this checkout's `.venv` and `models/`.
+
+Choose **Add a folder / Ajouter un dossier**, select a folder in the Mac chooser, and authorize code, documents, and/or images. Exclusion patterns follow Git ignore syntax, one per line. Ordinary folders and Git repositories are supported. Saved changes are watched and reconciled every five minutes. The index persists across restarts.
+
+Select a sidebar source to restrict search, choose a result-type filter, and describe what you need. Return starts a search; Command-K focuses the field. Select a result for a text/image preview; the Finder button reveals the original file. Choose **Manage access / Gérer l’accès** to inspect a selected source, its exclusions and unreadable files, or revoke access. A right-click on a source also exposes these controls.
 
 
 ## Settings and assistants
 
-Open **Réglages** in the sidebar or press **Command-comma** to configure the shared model. See [model settings](model.md) for precision, dimensions, text limits, image detail and rebuild behavior.
+Open **Settings / Réglages** in the sidebar or press **Command-comma** to configure the shared model. See [model settings](model.md) for precision, dimensions, text limits, image detail and rebuild behavior.
 
-The **Connecter un assistant / MCP** panel provides connection commands and **Accès par projet** grants. See [MCP connection and project scope](mcp.md) before connecting an assistant. The app searches its authorized sources; MCP searches default to the assistant’s project.
+The **Connect an assistant / Connecter un assistant / MCP** panel provides connection commands and **Project access / Accès par projet** grants. See [MCP connection and project scope](mcp.md) before connecting an assistant. The app searches its authorized sources; MCP searches default to the assistant’s project.
+
+## Interface language
+
+In **Settings → Language** (**Réglages → Langue**), choose **Follow macOS** or an available translation. The default follows the preferred languages set in macOS, including an app-specific language preference, and falls back to English when no supported language matches. An explicit choice is saved locally and changes the app interface and menu-bar shortcut menu immediately, without rebuilding indexes or restarting the service.
+
+Source names, paths, search queries, retrieved content, and backend diagnostic messages keep their original text. macOS-provided menus and system dialog controls follow the system's app language preference; the in-app choice controls Local Search's own text. To add a translation, see [the localization workflow](development.md#localization).
 
 ## Source access and app lifecycle
 
@@ -37,7 +46,7 @@ Text files are limited to 512 KB, images and PDF/DOCX files to 20 MB, images to 
 
 ## Current limitations
 
-The `.app` is ad-hoc signed for development and points to this checkout's Python environment and local model. It is **not a standalone distributable installer yet**. Rebuild after moving the checkout. The app can be moved on this Mac while those configured paths stay valid. Python requires 3.12 or newer; the app targets macOS 14 or newer.
+The app is ad-hoc signed, not notarized: the first launch of a downloaded copy needs **Open Anyway** in System Settings → Privacy & Security. It requires Apple Silicon (PyTorch no longer ships Intel macOS builds) and macOS 14 or newer. First-launch setup needs an internet connection and about 3 GB of disk space. A `--dev` build points to this checkout's Python environment and model; rebuild it after moving the checkout.
 
 Large libraries and launch-at-login installation remain future work. The app is not distributed with App Sandbox and does not yet use sandbox bookmarks. macOS may separately prompt for protected-folder access.
 

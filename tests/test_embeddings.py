@@ -2,8 +2,8 @@ import numpy as np
 import pytest
 import torch
 
-from local_code_search.embeddings import Embedder
-from local_code_search.chunks import Chunk, _bound_chunk
+from semantic_search.embeddings import Embedder
+from semantic_search.chunks import Chunk, _bound_chunk
 
 
 def test_configurable_limit_is_applied_on_load_and_to_a_loaded_model(tmp_path, monkeypatch):

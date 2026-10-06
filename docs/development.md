@@ -1,12 +1,12 @@
 # Development
 
-Python requires **3.12 or newer**; the Swift app targets **macOS 14 or newer**. Run commands from the repository root. The local model checkpoint must be present at `models/embeddinggemma-2/`; runtime loading is offline and does not download models.
+Python requires **3.12 or newer**; the Swift app targets **macOS 14 or newer**. Run commands from the repository root. Development commands expect the model checkpoint at `models/embeddinggemma-2/`; runtime loading is offline and never downloads models.
 
 ## Setup
 
 ```sh
 uv sync --extra dev
-.venv/bin/hf download google/embeddinggemma-2 --local-dir models/embeddinggemma-2
+.venv/bin/code-search download-model   # pinned revision, SHA-256 verified, resumable
 .venv/bin/code-search --help
 ```
 
@@ -20,11 +20,36 @@ Git is initialized at the project root. The root `.gitignore` excludes the Pytho
 
 ```sh
 swift build --package-path macos
-.venv/bin/python scripts/build-mac-app.py
+.venv/bin/python scripts/build-mac-app.py --dev   # linked to this checkout
 open '.code-search/Local Search.app'
 ```
 
-The build script makes an ad-hoc signed development bundle at `.code-search/Local Search.app`. Its configuration points to this checkout’s Python executable and checkpoint, so rebuild after moving the checkout. This is not a standalone installer. Closing the app window keeps the service running; quitting stops only the backend started by that app. After backend/MCP upgrades, restart the app/service and open fresh assistant sessions.
+`--dev` makes an ad-hoc signed bundle at `.code-search/Local Search.app` whose `Info.plist` points to this checkout’s `.venv/bin/code-search` and `models/embeddinggemma-2`, so it skips first-launch setup; rebuild after moving the checkout.
+
+Without `--dev`, the script builds the standalone app (about 45 MB). `Contents/Resources/backend/` holds the `uv` executable, the backend wheel, `requirements.txt` exported from `uv.lock` with hashes, licenses, and a `version` stamp derived from the wheel and requirements. The app compares that stamp with `runtime/version` to decide whether setup or an engine update is needed. Add `--dmg` to also write `.code-search/Local-Search-<version>.dmg` for a GitHub release. Bump `version` in `pyproject.toml` for each release. Releases are Apple Silicon only.
+
+To exercise first-launch setup without touching the live state or service, launch the binary with a disposable state folder and port:
+
+```sh
+LOCAL_SEARCH_STATE=/tmp/local-search-state LOCAL_SEARCH_PORT=18766 \
+  '.code-search/Local Search.app/Contents/MacOS/LocalSearch'
+```
+
+Closing the app window keeps the service running; quitting stops only the backend started by that app. After backend/MCP upgrades, restart the app/service and open fresh assistant sessions.
+
+## Localization
+
+The app uses [standard Swift Package Manager localized resources](https://developer.apple.com/documentation/xcode/localizing-package-resources), with English as the development language in `macos/Package.swift`. Translations live in `macos/Sources/LocalSearch/Resources/<language>.lproj/Localizable.strings`; plural counts live in the companion `Localizable.stringsdict`. `Localization.swift` discovers available languages from the resource bundle, matches macOS preferences, and stores an explicit in-app choice in the app's `appLanguage` user default. Missing translated keys fall back to English.
+
+To add a language:
+
+1. Copy `en.lproj` to a language-tag directory such as `es.lproj` or `pt-BR.lproj` under `Resources`.
+2. Translate string values, keeping the stable keys and format placeholders (`%1$@`, `%2$lld`, etc.) unchanged. Escape quotes and newlines as required by `.strings` syntax. Adjust the `.stringsdict` plural categories for the target language while retaining the `lld` integer type and `count` variable.
+3. Use `L10n.string("key")` for new interface text, with arguments for formatted messages. Add each new key to every translation. Keep user content, paths, command lines, protocol values, and backend diagnostics out of the catalogs.
+4. Run `swift test --package-path macos` and `swift build --package-path macos`, then rebuild the development app with `.venv/bin/python scripts/build-mac-app.py --dev`. The builder embeds the Swift resource bundle and declares the discovered languages in `Info.plist`; no hard-coded language list needs updating.
+5. Open Settings and select the language. Check the main window, folder authorization, source access/revocation, result previews, assistant connection, Settings, and menu-bar shortcut menu for wrapping and clipped text. Return to **Follow macOS** to verify language matching.
+
+Localization tests use temporary preferences and fixture resources. They check language matching, fallback, persistence, plural forms, translation keys and format placeholders without starting the backend or reading a user's index. The in-app language setting changes the app's own text immediately; system-provided menu/dialog controls use macOS's language preference. It does not change search/index settings or translate retrieved content and service errors.
 
 ## Isolated experiments
 
@@ -51,7 +76,7 @@ Do not edit model weights, virtual environments, caches, generated bundles or li
 | --- | --- |
 | Documentation only | Verify local links, paths and commands; runtime tests are unnecessary |
 | Backend | Relevant pytest coverage and the full suite when feasible; meaningful regressions for changed boundaries, contracts, caches or concurrency |
-| Swift | `swift build --package-path macos`; bundle build for configuration/launch changes; inspect the affected UI when possible |
+| Swift | `swift build --package-path macos`; `swift test --package-path macos` for localization changes; bundle build for configuration/launch changes; inspect the affected UI when possible |
 | Embeddings, documents/images or end-to-end MCP | Disposable real-model workspace smoke check when the checkpoint is available |
 | Retrieval benchmark | Only an intended, ready single-repository service; check the cases and output path first |
 

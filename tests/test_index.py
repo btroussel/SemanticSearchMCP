@@ -6,10 +6,10 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
-from local_code_search.chunks import split_file
-from local_code_search.files import Repository
-from local_code_search.index import Index
-from local_code_search.service import Worker, create_app
+from semantic_search.chunks import split_file
+from semantic_search.files import Repository
+from semantic_search.index import Index
+from semantic_search.service import Worker, create_app
 
 
 class FakeEmbedder:
@@ -201,3 +201,46 @@ def test_token_budget_rebuilds_old_index_and_preserves_long_line_tail(repo, tmp_
     assert changed.status()["files"] == 0
     assert changed.sync()["embedded_chunks"] > 0
     changed.db.close()
+
+
+def test_identical_copies_share_one_result_and_respect_scope(repo, tmp_path):
+    original = (repo / "tracker.py").read_text()
+    for copy in ("backup/tracker.py", "vendor_copy/tracker.py", "other/tracker.py"):
+        (repo / copy).parent.mkdir(exist_ok=True)
+        (repo / copy).write_text(original)
+    (repo / "different.py").write_text("def associate(detections):\n    return sorted(detections)\n")
+    index = Index(repo, tmp_path / "index.sqlite", FakeEmbedder())
+    index.sync()
+    for mode in ("lexical", "semantic", "hybrid"):
+        results = index.search("associate detections", mode=mode, limit=30)["results"]
+        methods = [r for r in results if r["symbol"] == "Tracker.associate"]
+        assert len(methods) == 1
+        assert {methods[0]["path"], *(d["path"] for d in methods[0]["duplicates"])} == {
+            "tracker.py", "backup/tracker.py", "vendor_copy/tracker.py", "other/tracker.py"}
+        # Similar but non-identical code remains a separate result.
+        assert any(r["path"] == "different.py" for r in results)
+    # Copies outside the requested scope are neither returned nor listed.
+    scoped = index.search("associate", mode="lexical", allowed_prefixes=["backup/", "other/"])["results"]
+    method = next(r for r in scoped if r["symbol"] == "Tracker.associate")
+    assert {method["path"], *(d["path"] for d in method["duplicates"])} == {"backup/tracker.py", "other/tracker.py"}
+    assert index.search("associate", mode="lexical", path_filter="backup/")["results"][0]["duplicates"] == []
+    # A copy edited after indexing is stale: it is reported, not listed as identical.
+    (repo / "other/tracker.py").write_text("# edited\n" + original)
+    result = index.search("associate", mode="lexical", limit=30)
+    method = next(r for r in result["results"] if r["symbol"] == "Tracker.associate")
+    assert "other/tracker.py" not in {method["path"], *(d["path"] for d in method["duplicates"])}
+    assert "other/tracker.py" in result["stale_paths"]
+    # Once reindexed, the edited copy is distinct content and gets its own result.
+    index.sync({"other/tracker.py"})
+    paths = [r["path"] for r in index.search("associate", mode="lexical", limit=30)["results"] if r["symbol"] == "Tracker.associate"]
+    assert sorted(paths) == ["other/tracker.py", "tracker.py"]
+
+
+def test_duplicate_listing_is_bounded(repo, tmp_path):
+    for number in range(15):
+        (repo / f"copy{number:02}.txt").write_text("quarterly budget forecast\n")
+    index = Index(repo, tmp_path / "index.sqlite", FakeEmbedder())
+    index.sync()
+    results = index.search("budget", mode="lexical")["results"]
+    assert len(results) == 1
+    assert len(results[0]["duplicates"]) == 10 and results[0]["duplicates_omitted"] == 4

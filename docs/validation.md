@@ -20,6 +20,16 @@ The script starts a separate real-model service with disposable state and synthe
 
 These are functional checks on small fixtures, not representative retrieval-quality, peak-memory, FP32/BF16 speed comparisons or full-agent speed benchmarks. A passing BF16 smoke check does not establish a performance benefit.
 
+## Mac app localization checks
+
+```sh
+swift test --package-path macos
+swift build --package-path macos
+.venv/bin/python scripts/build-mac-app.py --dev
+```
+
+Swift tests cover preferred-language matching (including regional variants and unsupported languages), saved language choices, immediate translation changes, English fallback for incomplete catalogs, plural counts, and matching translation keys/format placeholders. They use temporary preferences and resource fixtures; they do not launch a model or authorize sources. The bundle build verifies resource packaging. Inspect each translated UI separately for wrapping and clipping; automated string checks do not establish visual quality. See [localization contribution steps](development.md#localization).
+
 ## Original MCP smoke
 
 ```sh

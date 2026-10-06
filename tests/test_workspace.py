@@ -7,8 +7,8 @@ import numpy as np
 from PIL import Image
 from fastapi.testclient import TestClient
 
-from local_code_search.workspace import SettingsRequest, SourceRequest, Workspace, WorkspaceSearch, create_workspace_app
-from local_code_search.mcp_server import create_server
+from semantic_search.workspace import SettingsRequest, SourceRequest, Workspace, WorkspaceSearch, create_workspace_app
+from semantic_search.mcp_server import create_server
 
 
 class MultimodalFixture:
@@ -26,7 +26,7 @@ class MultimodalFixture:
         return f"multimodal-test:{self.dimensions}:{self.precision}:{self.images}:{self.image_tokens}"
 
     def configuration(self):
-        from local_code_search.settings import ModelSettings
+        from semantic_search.settings import ModelSettings
         return {key: getattr(self, key) for key in ModelSettings.model_fields}
 
     def configure(self, **changes):
@@ -386,3 +386,21 @@ def test_failed_settings_write_keeps_runtime_and_index_usable(tmp_path, monkeypa
     assert workspace.embedder.configuration() == before
     assert worker.index.status()['files'] == 1 and not worker.reset_requested.is_set()
     assert worker.index.search('authenticate', mode='lexical')['results']
+
+
+def test_identical_files_across_sources_share_one_result(tmp_path):
+    workspace = make_workspace(tmp_path)
+    a, b = tmp_path / "a", tmp_path / "b"
+    a.mkdir(); b.mkdir()
+    for root in (a, b):
+        (root / "report.txt").write_text("annual meeting minutes")
+    (a / "report copy.txt").write_text("annual meeting minutes")
+    (b / "agenda.txt").write_text("meeting agenda draft")
+    first = workspace.add(SourceRequest(path=str(a), kinds=["documents"]))
+    second = workspace.add(SourceRequest(path=str(b), kinds=["documents"]))
+    workspace.index(first["id"]).sync(); workspace.index(second["id"]).sync()
+    results = workspace.search(WorkspaceSearch(query="meeting", mode="lexical"))["results"]
+    assert len(results) == 2
+    report = next(r for r in results if r["path"] != "agenda.txt")
+    locations = {(report["source_id"], report["path"])} | {(d["source_id"], d["path"]) for d in report["duplicates"]}
+    assert locations == {(first["id"], "report.txt"), (first["id"], "report copy.txt"), (second["id"], "report.txt")}

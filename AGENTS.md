@@ -4,11 +4,11 @@
 
 Local Search is a native macOS app and local MCP service for searching user-authorized code, documents, and images with EmbeddingGemma 2. One background service shares the model across folders and assistants. Prioritize a clear, reliable experience for choosing folders, finding results, and connecting an assistant.
 
-Read `README.md` and `docs/README.md` first. Use `docs/mac-app.md` for app behavior, `docs/architecture.md` for the code map, `docs/privacy.md` for access boundaries, and `docs/development.md` / `docs/validation.md` for commands and checks. The generated Mac app is a development build tied to this checkout's Python environment and model, not a standalone installer. Do not describe it as distributable until packaging actually supports that.
+Read `README.md` and `docs/README.md` first. Use `docs/mac-app.md` for app behavior, `docs/architecture.md` for the code map, `docs/privacy.md` for access boundaries, and `docs/development.md` / `docs/validation.md` for commands and checks. `scripts/build-mac-app.py` builds a standalone app that installs Python, libraries and the model on first launch; `--dev` links it to this checkout instead. Releases are ad-hoc signed and not notarized; describe that accurately.
 
 ## Code map
 
-- `src/local_code_search/cli.py`: CLI entry points; both `code-search` and `local-search` invoke the same implementation.
+- `semantic_search/cli.py`: CLI entry points; both `code-search` and `local-search` invoke the same implementation.
 - `workspace.py`: authorized sources, persistent settings, shared service, authentication, and general HTTP API.
 - `access.py`: per-project MCP grants and allowed source prefixes.
 - `service.py`: background indexing workers and the original single-repository HTTP API.
@@ -18,11 +18,12 @@ Read `README.md` and `docs/README.md` first. Use `docs/mac-app.md` for app behav
 - `settings.py`: shared model-option defaults and validation.
 - `index.py`: SQLite metadata, embedding cache, FTS5, vector search, and freshness checks.
 - `mcp_server.py`: lightweight stdio bridge to the HTTP service; keep model loading in the service.
-- `macos/Sources/LocalSearch/LocalSearch.swift`: SwiftUI app and backend lifecycle.
+- `download.py`: pinned, hash-verified, resumable model download; the only network code.
+- `macos/Sources/LocalSearch/LocalSearch.swift`: SwiftUI app, first-launch setup and backend lifecycle.
 - `scripts/`: app build, disposable real-model smoke test, MCP check, and retrieval benchmark.
 - `tests/`: Python tests using temporary sources and fixture embedders.
 
-Python modules above are under `src/local_code_search/`.
+Python modules above are under `semantic_search/`.
 
 ## Development commands
 
@@ -33,10 +34,10 @@ uv sync --extra dev
 .venv/bin/pytest -q
 ```
 
-Build the development Mac app:
+Build the development Mac app (omit `--dev` for the standalone build, add `--dmg` for a release image):
 
 ```sh
-.venv/bin/python scripts/build-mac-app.py
+.venv/bin/python scripts/build-mac-app.py --dev
 open '.code-search/Local Search.app'
 ```
 

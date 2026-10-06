@@ -10,7 +10,7 @@ The indexer reads source data; it never imports, executes or modifies indexed pr
 
 ## MCP project boundaries
 
-The app’s indexing authorization and an assistant’s project scope are separate. By default, MCP can access only the bridge’s project folder within authorized sources. Extra folders or subfolders require a saved grant for that project in **Connecter un assistant → Accès par projet**. A grant for one project does not authorize another.
+The app’s indexing authorization and an assistant’s project scope are separate. By default, MCP can access only the bridge’s project folder within authorized sources. Extra folders or subfolders require a saved grant for that project in **Connect an assistant → Project access**. A grant for one project does not authorize another.
 
 Omitted `source_id` stays project-only. An explicit source ID permits only its project and granted prefixes; it cannot bypass scope. Searches, file reads, symbol expansion, previews, and reindex requests enforce the scope. The bridge checks that the backend acknowledges project-scoped access. See [connection and grant management](mcp.md).
 
@@ -29,6 +29,10 @@ Private state includes `sources.json`, `settings.json`, `mcp-access.json`, per-s
 
 The general API validates local hosts, requires authentication on every endpoint and provides no CORS allowance for unrelated web origins. The original single-repository service uses loopback port 8765 and does not use the general service’s bearer-key/source-grant contract; see [CLI modes](cli.md).
 
+## Network use during setup
+
+The app contacts the network only when you click **Install** or **Update** on its setup screen: the bundled uv downloads Python from [python-build-standalone](https://github.com/astral-sh/python-build-standalone) releases on GitHub and the hash-locked libraries from PyPI, and `code-search download-model` downloads the pinned EmbeddingGemma 2 revision from Hugging Face and verifies each file's SHA-256. Requests carry no indexed content or folder information. Setup files live in `runtime/`, `models/` and `setup.log` inside the private state directory.
+
 ## Local computation and cloud assistants
 
-One offline model with text and vision encoders is shared across folders using the existing local checkpoint. Indexing and similarity computation stay on the Mac. Requested snippets and image previews returned to a cloud assistant can still be sent to that assistant’s provider. Local indexing is not a promise that retrieved content never leaves the device.
+One offline model with text and vision encoders is shared across folders using the local checkpoint. Indexing and similarity computation stay on the Mac. Requested snippets and image previews returned to a cloud assistant can still be sent to that assistant’s provider. Local indexing is not a promise that retrieved content never leaves the device.

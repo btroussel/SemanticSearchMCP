@@ -15,6 +15,14 @@ from .chunks import CHUNK_VERSION, Chunk, chunk_id, split_file
 from .files import Repository, digest
 from .settings import DEFAULT_MAX_TOKENS
 
+MAX_DUPLICATES = 10
+
+
+def duplicate_key(row: dict) -> tuple:
+    """Identify the same chunk in byte-identical files (or identically extracted documents)."""
+    # Image text names the file, so the pixel hash alone identifies copies.
+    return (row["file_hash"], row["kind"], row["start"], row["end"], "" if row["kind"] == "image" else row["text"])
+
 
 def words(text: str) -> str:
     text = re.sub(r"([a-z])([A-Z])", r"\1 \2", text)
@@ -38,6 +46,7 @@ class Index:
         self.matrix_revision = -1
         self.rows = []
         self.matrix = np.empty((0, embedder.dimensions), dtype=np.float32)
+        self.keys, self.copies = [], {}
         self.query_cache = {}
         self.last_sync = None
         self.db.executescript("""
@@ -82,7 +91,7 @@ class Index:
                 ("model", self.embedder.fingerprint),
             ])
             self.query_cache.clear()
-            self.rows = []
+            self.rows, self.keys, self.copies = [], [], {}
             self.matrix = np.empty((0, self.embedder.dimensions), dtype=np.float32)
             self.last_sync = None
             self.revision += 1
@@ -201,8 +210,13 @@ class Index:
             if self.matrix_revision != self.revision:
                 self.rows = [dict(r) for r in self.db.execute("SELECT chunks.*, files.hash AS file_hash FROM chunks JOIN files USING(path)")]
                 self.matrix = np.stack([np.frombuffer(r.pop("vector"), dtype=np.float32) for r in self.rows]) if self.rows else np.empty((0, self.embedder.dimensions), dtype=np.float32)
+                self.keys = [duplicate_key(r) for r in self.rows]
+                groups = {}
+                for i, key in enumerate(self.keys):
+                    groups.setdefault(key, []).append(i)
+                self.copies = {k: sorted(v, key=lambda i: self.rows[i]["path"]) for k, v in groups.items() if len(v) > 1}
                 self.matrix_revision = self.revision
-            return self.rows, self.matrix
+            return self.rows, self.matrix, self.keys, self.copies
 
     def search(self, query: str, limit: int = 10, path_filter: str = "", mode: str = "auto", max_chars: int = 18000, asset_kind: str = "", allowed_prefixes: list[str] | None = None):
         if not query.strip() or len(query) > 2000:
@@ -219,7 +233,7 @@ class Index:
         if Path(path_filter).is_absolute() or ".." in Path(path_filter).parts:
             raise ValueError("path_filter must be a repository-relative prefix")
         start = time.perf_counter()
-        rows, matrix = self._snapshot()
+        rows, matrix, keys, copies = self._snapshot()
         candidates = [i for i, r in enumerate(rows) if r["path"].startswith(path_filter) and self._allowed(r["path"])
                       and (allowed_prefixes is None or any(r["path"].startswith(p) for p in allowed_prefixes))
                       and (not asset_kind or self.repo.kind(r["path"]) == asset_kind)]
@@ -272,10 +286,11 @@ class Index:
                         ranked[i] = ranked.get(i, 0) + 1 / (60 + rank)
                         if rank >= 100:
                             break
-        results, stale_paths, source_cache = [], set(), {}
+        results, stale_paths, source_cache, shown = [], set(), {}, set()
         remaining = max_chars
-        for i in sorted(ranked, key=ranked.get, reverse=True):
-            row = rows[i]
+        allowed = set(candidates) if copies else set()
+
+        def current(row):
             path = row["path"]
             if path not in source_cache:
                 try:
@@ -288,7 +303,15 @@ class Index:
                 except (OSError, UnicodeError, ValueError):
                     stale_paths.add(path)
                     source_cache[path] = None
-            lines = source_cache[path]
+            return source_cache[path]
+
+        for i in sorted(ranked, key=ranked.get, reverse=True):
+            row = rows[i]
+            path = row["path"]
+            # Identical copies share one result slot; the result lists the other paths.
+            if keys[i] in shown:
+                continue
+            lines = current(row)
             if lines is None:
                 continue
             # Prefer distinct locations over duplicate file/function representations.
@@ -296,20 +319,31 @@ class Index:
                 row["kind"] != "block" or r["kind"] != "block" or
                 row["start"] != row["end"] or r["code"] == row["text"][:4500]
             ) for r in results):
+                shown.add(keys[i])  # The shown result already lists this location's copies.
                 continue
             end = min(row["end"], row["start"] + 99)
             code = "\n".join(row["text"].splitlines()[:100]) if row["kind"] == "block" else "\n".join(lines[row["start"] - 1:end])
             allowance = min(4500, remaining)
             if allowance < 200:
                 break
-            shown = code[:allowance]
+            snippet = code[:allowance]
+            duplicates, omitted = [], 0
+            for j in copies.get(keys[i], ()):
+                if j == i or rows[j]["path"] == path or j not in allowed:
+                    continue
+                if len(duplicates) >= MAX_DUPLICATES:
+                    omitted += 1
+                elif current(rows[j]) is not None:
+                    duplicates.append({"path": rows[j]["path"]})
+            shown.add(keys[i])
             results.append({"id": row["id"], "path": path, "symbol": row["symbol"], "kind": row["kind"],
                             "start_line": row["start"], "end_line": row["end"], "parent_id": row["parent_id"],
-                            "code": shown, "truncated": end < row["end"] or len(shown) < len(code),
+                            "code": snippet, "truncated": end < row["end"] or len(snippet) < len(code),
                             "asset_kind": self.repo.kind(path),
                             "line_origin": "extracted_text" if Path(path).suffix.lower() in {".pdf", ".docx"} else "file",
-                            "score": round(ranked[i], 6), "cosine": similarities.get(i), "lexical_rank": lexical_ranks.get(i)})
-            remaining -= len(shown)
+                            "score": round(ranked[i], 6), "cosine": similarities.get(i), "lexical_rank": lexical_ranks.get(i),
+                            "content_id": digest(repr(keys[i]))[:24], "duplicates": duplicates, "duplicates_omitted": omitted})
+            remaining -= len(snippet)
             if len(results) >= limit:
                 break
         return {"query": query, "mode": mode, "results": results, "stale_paths": sorted(stale_paths),

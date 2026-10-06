@@ -15,7 +15,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
-from .index import Index
+from .index import MAX_DUPLICATES, Index
 from .service import Worker, SearchRequest
 from .settings import ModelSettings, validate_max_tokens
 from .access import AccessRequest, ProjectAccess, project_header
@@ -302,10 +302,23 @@ class Workspace:
                     issues.append({"source_id": identifier, "error": hit["degraded"]})
                 for result in hit["results"]:
                     results.append({**result, "source_id": identifier, "source_name": entry["config"]["name"],
-                                    "source_path": entry["config"]["path"], "mode": hit["mode"]})
+                                    "source_path": entry["config"]["path"], "mode": hit["mode"],
+                                    "duplicates": [{"source_id": identifier, **d} for d in result["duplicates"]]})
             results.sort(key=lambda r: r["cosine"] if r["cosine"] is not None and request.mode != "hybrid" else r["score"], reverse=True)
+            # Copies in other sources join the best-ranked result instead of taking another slot.
+            distinct, by_content = [], {}
+            for result in results:
+                first = by_content.get(result["content_id"])
+                if first is None:
+                    by_content[result["content_id"]] = result
+                    distinct.append(result)
+                    continue
+                extra = [{"source_id": result["source_id"], "path": result["path"]}] + result["duplicates"]
+                room = max(0, MAX_DUPLICATES - len(first["duplicates"]))
+                first["duplicates"] += extra[:room]
+                first["duplicates_omitted"] += max(0, len(extra) - room) + result["duplicates_omitted"]
             bounded, remaining = [], request.max_chars
-            for result in results[:request.limit]:
+            for result in distinct[:request.limit]:
                 code = result["code"]
                 result["code"] = code[:remaining]
                 result["truncated"] |= len(code) > remaining

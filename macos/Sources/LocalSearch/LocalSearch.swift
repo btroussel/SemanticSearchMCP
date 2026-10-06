@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import Combine
 
 struct Source: Decodable, Identifiable {
     let id, name, path, phase: String
@@ -8,7 +9,7 @@ struct Source: Decodable, Identifiable {
     let error: String?
     let last_sync: SyncStats?
     var phaseLabel: String {
-        switch phase { case "ready": return "À jour"; case "indexing": return "Indexation…"; case "error": return "Erreur"; default: return "Démarrage…" }
+        switch phase { case "ready": return L10n.string("phase.ready"); case "indexing": return L10n.string("phase.indexing"); case "error": return L10n.string("phase.error"); default: return L10n.string("phase.starting") }
     }
 }
 struct SyncStats: Decodable { let skipped_files: [SkippedFile]? }
@@ -26,14 +27,18 @@ struct Hit: Decodable, Identifiable, Hashable {
     let cosine: Double?
     let line_origin: String
     let parent_id: String?
+    let duplicates: [Duplicate]?
+    let duplicates_omitted: Int?
     let rawID: String
     var id: String { source_id + ":" + rawID }
     var url: URL { URL(fileURLWithPath: source_path).appendingPathComponent(path) }
+    var copyCount: Int { (duplicates?.count ?? 0) + (duplicates_omitted ?? 0) }
     enum CodingKeys: String, CodingKey {
-        case source_id, source_name, source_path, path, symbol, kind, asset_kind, code, start_line, end_line, cosine, line_origin, parent_id
+        case source_id, source_name, source_path, path, symbol, kind, asset_kind, code, start_line, end_line, cosine, line_origin, parent_id, duplicates, duplicates_omitted
         case rawID = "id"
     }
 }
+struct Duplicate: Decodable, Hashable { let source_id, path: String }
 struct SearchReply: Decodable {
     let results: [Hit]
     let elapsed_ms: Double
@@ -72,13 +77,45 @@ final class SearchStore: ObservableObject {
     @Published var latency: Double?
     @Published var showConnections = false
     @Published var addingPath: URL?
+    @Published var setupNeeded = false
+    @Published var setupRunning = false
+    @Published var setupStep = ""
+    @Published var setupFraction: Double?
+    @Published var setupError: String?
     var process: Process?
+    var setupProcess: Process?
+    var setupCancelled = false
     var timer: Timer?
-    let state = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Local Search")
-    let base = "http://127.0.0.1:8766"
-    var command: String { Bundle.main.object(forInfoDictionaryKey: "SearchServiceExecutable") as? String ?? "" }
-    var model: String { Bundle.main.object(forInfoDictionaryKey: "SearchModelPath") as? String ?? "" }
+    // LOCAL_SEARCH_STATE and LOCAL_SEARCH_PORT isolate experiments from the live state and service.
+    let state = URL(fileURLWithPath: ProcessInfo.processInfo.environment["LOCAL_SEARCH_STATE"]
+        ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Local Search").path)
+    let port = ProcessInfo.processInfo.environment["LOCAL_SEARCH_PORT"] ?? "8766"
+    var base: String { "http://127.0.0.1:\(port)" }
+    var runtime: URL { state.appendingPathComponent("runtime") }
+    var setupLog: URL { state.appendingPathComponent("setup.log") }
+    var defaultModel: URL { state.appendingPathComponent("models/embeddinggemma-2") }
+    var modelChoice: URL { state.appendingPathComponent("model-path") }
+    var backend: URL? {
+        guard let url = Bundle.main.resourceURL?.appendingPathComponent("backend"),
+              FileManager.default.fileExists(atPath: url.appendingPathComponent("uv").path) else { return nil }
+        return url
+    }
+    var devCommand: String? { Bundle.main.object(forInfoDictionaryKey: "SearchServiceExecutable") as? String }
+    var command: String { devCommand ?? runtime.appendingPathComponent("venv/bin/code-search").path }
+    var model: String {
+        if let chosen = try? String(contentsOf: modelChoice, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines), !chosen.isEmpty { return chosen }
+        return Bundle.main.object(forInfoDictionaryKey: "SearchModelPath") as? String ?? defaultModel.path
+    }
+    var bundleVersion: String? { backend.flatMap { try? String(contentsOf: $0.appendingPathComponent("version"), encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines) } }
+    var installedVersion: String? { try? String(contentsOf: runtime.appendingPathComponent("version"), encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines) }
+    var engineInstalled: Bool { FileManager.default.isExecutableFile(atPath: command) }
+    var engineReady: Bool { devCommand != nil ? engineInstalled : engineInstalled && installedVersion == bundleVersion }
+    var modelReady: Bool { Self.isModel(URL(fileURLWithPath: model)) }
     var selectedHit: Hit? { results.first { $0.id == selected } }
+
+    static func isModel(_ url: URL) -> Bool {
+        ["config.json", "model.safetensors", "tokenizer.json"].allSatisfy { FileManager.default.fileExists(atPath: url.appendingPathComponent($0).path) }
+    }
 
     init() {
         Task { await start() }
@@ -102,16 +139,18 @@ final class SearchStore: ObservableObject {
         let code = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(code) else {
             let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-            throw NSError(domain: "LocalSearch", code: code, userInfo: [NSLocalizedDescriptionKey: value?["detail"] as? String ?? "Le service a retourné \(code)"])
+            throw NSError(domain: "LocalSearch", code: code, userInfo: [NSLocalizedDescriptionKey: value?["detail"] as? String ?? L10n.string("service.response", code)])
         }
         return data
     }
     func start() async {
-        if (try? await request("/status")) != nil { await refresh(); return }
-        guard FileManager.default.isExecutableFile(atPath: command), !model.isEmpty else {
-            error = "Le moteur local est introuvable. Reconstruis l’application avec scripts/build-mac-app.py."
+        if (try? await request("/status")) != nil { setupNeeded = false; await refresh(); return }
+        guard devCommand != nil || backend != nil else {
+            error = L10n.string("service.missing")
             return
         }
+        guard engineReady, modelReady else { setupNeeded = true; return }
+        setupNeeded = false
         do {
             try FileManager.default.createDirectory(at: state, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
             let logURL = state.appendingPathComponent("service.log")
@@ -120,12 +159,12 @@ final class SearchStore: ObservableObject {
             try log.seekToEnd()
             let child = Process()
             child.executableURL = URL(fileURLWithPath: command)
-            child.arguments = ["workspace", "--model", model, "--state", state.path]
+            child.arguments = ["workspace", "--model", model, "--state", state.path, "--port", port]
             child.standardOutput = log
             child.standardError = log
             child.terminationHandler = { process in
                 Task { @MainActor in
-                    if process.terminationStatus != 0 { SearchStore.shared.error = "Le moteur s’est arrêté. Consulte \(logURL.path)." }
+                    if process.terminationStatus != 0 { SearchStore.shared.error = L10n.string("service.stopped", logURL.path) }
                 }
             }
             try child.run()
@@ -134,8 +173,124 @@ final class SearchStore: ObservableObject {
                 if (try? await request("/status")) != nil { await refresh(); error = nil; return }
                 try await Task.sleep(for: .milliseconds(250))
             }
-            error = "Le moteur démarre encore. Son état sera actualisé automatiquement."
+            error = L10n.string("service.starting")
         } catch { self.error = error.localizedDescription }
+    }
+
+    // First-launch setup: bundled uv installs Python and hash-locked libraries into runtime/,
+    // then the engine downloads the pinned model. Both steps resume or restart safely.
+    func install() async {
+        setupRunning = true; setupError = nil; setupCancelled = false; setupFraction = nil
+        defer { setupRunning = false; setupProcess = nil; setupStep = "" }
+        do {
+            try FileManager.default.createDirectory(at: state, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            let needed = Int64(engineReady ? 0 : 2_000_000_000) + Int64(modelReady ? 0 : 1_600_000_000)
+            if let free = try state.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]).volumeAvailableCapacityForImportantUsage, free < needed {
+                throw NSError(domain: "LocalSearch", code: 1, userInfo: [NSLocalizedDescriptionKey: L10n.string("setup.diskSpace", needed / 1_000_000_000 + 1, Int64(free / 1_000_000_000))])
+            }
+            if !engineReady { try await installEngine() }
+            if !modelReady { try await downloadModel() }
+            await start()
+        } catch {
+            setupError = setupCancelled ? nil : error.localizedDescription
+        }
+    }
+    func installEngine() async throws {
+        guard let backend, let version = bundleVersion else { throw NSError(domain: "LocalSearch", code: 2, userInfo: [NSLocalizedDescriptionKey: L10n.string("service.missing")]) }
+        let manager = FileManager.default
+        let staging = runtime.appendingPathComponent("venv-new"), final = runtime.appendingPathComponent("venv")
+        try manager.createDirectory(at: runtime, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        try? manager.removeItem(at: staging)
+        let uv = backend.appendingPathComponent("uv")
+        let environment = ["UV_PYTHON_INSTALL_DIR": runtime.appendingPathComponent("python").path,
+                           "UV_CACHE_DIR": runtime.appendingPathComponent("cache").path,
+                           "UV_PYTHON_PREFERENCE": "only-managed", "UV_NO_CONFIG": "1", "UV_NO_PROGRESS": "1"]
+        let python = staging.appendingPathComponent("bin/python").path
+        setupStep = L10n.string("setup.step.python")
+        try await run(uv, ["venv", "--relocatable", "--python", "3.12", staging.path], environment: environment)
+        setupStep = L10n.string("setup.step.libraries")
+        try await run(uv, ["pip", "install", "--python", python, "--require-hashes", "-r", backend.appendingPathComponent("requirements.txt").path], environment: environment)
+        setupStep = L10n.string("setup.step.app")
+        guard let wheel = try manager.contentsOfDirectory(atPath: backend.path).first(where: { $0.hasSuffix(".whl") }) else { throw CocoaError(.fileNoSuchFile) }
+        try await run(uv, ["pip", "install", "--python", python, "--no-deps", "--reinstall", backend.appendingPathComponent(wheel).path], environment: environment)
+        // Downloaded runtimes must not inherit a quarantine flag that would block them from loading.
+        try? await run(URL(fileURLWithPath: "/usr/bin/xattr"), ["-dr", "com.apple.quarantine", staging.path, runtime.appendingPathComponent("python").path])
+        if process?.isRunning == true { process?.terminate() }
+        try? manager.removeItem(at: final)
+        try manager.moveItem(at: staging, to: final)
+        try (version + "\n").write(to: runtime.appendingPathComponent("version"), atomically: true, encoding: .utf8)
+        try? await run(uv, ["cache", "prune"], environment: environment)
+    }
+    func downloadModel() async throws {
+        setupStep = L10n.string("setup.step.model")
+        setupFraction = 0
+        try await run(URL(fileURLWithPath: command), ["download-model", "--dest", defaultModel.path, "--json"]) { line in
+            guard let data = line.data(using: .utf8),
+                  let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let done = value["downloaded"] as? Double, let total = value["total"] as? Double, total > 0 else { return }
+            self.setupFraction = done / total
+            self.setupStep = L10n.string("setup.step.modelProgress", done / 1e9, total / 1e9)
+        }
+        if model != defaultModel.path { try (defaultModel.path + "\n").write(to: modelChoice, atomically: true, encoding: .utf8) }
+    }
+    func run(_ executable: URL, _ arguments: [String], environment: [String: String] = [:], onLine: ((String) -> Void)? = nil) async throws {
+        if setupCancelled { throw CancellationError() }
+        let manager = FileManager.default
+        if !manager.fileExists(atPath: setupLog.path) { manager.createFile(atPath: setupLog.path, contents: nil, attributes: [.posixPermissions: 0o600]) }
+        let log = try FileHandle(forWritingTo: setupLog)
+        try log.seekToEnd()
+        log.write(Data("\n$ \(executable.lastPathComponent) \(arguments.joined(separator: " "))\n".utf8))
+        let child = Process(), output = Pipe(), errors = Pipe()
+        child.executableURL = executable
+        child.arguments = arguments
+        child.environment = ProcessInfo.processInfo.environment.merging(environment) { $1 }
+        child.standardOutput = output
+        child.standardError = errors
+        let tail = Task.detached { () -> [String] in
+            var lines: [String] = []
+            for try await line in errors.fileHandleForReading.bytes.lines {
+                log.write(Data((line + "\n").utf8))
+                lines.append(line); if lines.count > 8 { lines.removeFirst() }
+            }
+            return lines
+        }
+        let progress = Task.detached {
+            for try await line in output.fileHandleForReading.bytes.lines {
+                if let onLine { await MainActor.run { onLine(line) } } else { log.write(Data((line + "\n").utf8)) }
+            }
+        }
+        let status: Int32 = try await withCheckedThrowingContinuation { continuation in
+            child.terminationHandler = { continuation.resume(returning: $0.terminationStatus) }
+            do { try child.run(); setupProcess = child } catch { continuation.resume(throwing: error) }
+        }
+        setupProcess = nil
+        // A cancelled step may leave grandchildren holding the pipes open; don't wait for them.
+        if setupCancelled { throw CancellationError() }
+        _ = try? await progress.value
+        let lines = (try? await tail.value) ?? []
+        try? log.close()
+        guard status == 0 else {
+            let reason = lines.last { !$0.trimmingCharacters(in: .whitespaces).isEmpty } ?? "exit status \(status)"
+            throw NSError(domain: "LocalSearch", code: Int(status), userInfo: [NSLocalizedDescriptionKey: L10n.string("setup.failed", reason)])
+        }
+    }
+    func cancelSetup() { setupCancelled = true; if setupProcess?.isRunning == true { setupProcess?.terminate() } }
+    func chooseModelFolder() {
+        let panel = NSOpenPanel()
+        panel.title = L10n.string("setup.model.panel")
+        panel.prompt = L10n.string("setup.model.panelPrompt")
+        panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url?.resolvingSymlinksInPath() else { return }
+        guard Self.isModel(url) else {
+            setupError = L10n.string("setup.model.invalid")
+            return
+        }
+        do {
+            try FileManager.default.createDirectory(at: state, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            try (url.path + "\n").write(to: modelChoice, atomically: true, encoding: .utf8)
+            setupError = nil
+            objectWillChange.send()
+        } catch { setupError = error.localizedDescription }
     }
     func refresh(silent: Bool = false) async {
         do {
@@ -153,13 +308,13 @@ final class SearchStore: ObservableObject {
             let reply = try JSONDecoder().decode(SearchReply.self, from: data)
             results = reply.results; selected = results.first?.id; latency = reply.elapsed_ms
             if let issue = reply.issues.first { error = issue.error }
-            else if !reply.stale_paths.isEmpty { error = "Certains fichiers viennent de changer. Relance la recherche après leur indexation." }
+            else if !reply.stale_paths.isEmpty { error = L10n.string("search.stale") }
         } catch { self.error = error.localizedDescription }
     }
     func chooseFolder() {
         let panel = NSOpenPanel()
-        panel.title = "Autoriser un dossier pour Local Search"
-        panel.prompt = "Choisir"
+        panel.title = L10n.string("folder.authorize.title")
+        panel.prompt = L10n.string("action.choose")
         panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.allowsMultipleSelection = false
         if panel.runModal() == .OK { addingPath = panel.url }
     }
@@ -190,7 +345,11 @@ final class SearchStore: ObservableObject {
             return true
         } catch { self.error = error.localizedDescription; return false }
     }
-    func shutdown() { timer?.invalidate(); if process?.isRunning == true { process?.terminate() } }
+    func shutdown() {
+        timer?.invalidate()
+        cancelSetup()
+        if process?.isRunning == true { process?.terminate() }
+    }
     func connectionCommand(_ client: String, project: String = "") -> String {
         func quote(_ value: String) -> String { "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'" }
         let prefix = client == "codex" ? "codex mcp add local-search -- " : "claude mcp add --scope user --transport stdio local-search -- "
@@ -198,8 +357,71 @@ final class SearchStore: ObservableObject {
     }
 }
 
+struct SetupView: View {
+    @ObservedObject var store = SearchStore.shared
+    var updating: Bool { store.engineInstalled && !store.engineReady && store.modelReady }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 22) {
+            HStack(spacing: 14) {
+                Image(systemName: "sparkle.magnifyingglass").font(.system(size: 38)).foregroundStyle(Color.accentColor)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(L10n.string(updating ? "setup.updated" : "setup.welcome")).font(.largeTitle.bold())
+                    Text(L10n.string("setup.tagline")).foregroundStyle(.secondary)
+                }
+            }
+            Text(L10n.string(updating ? "setup.updateIntro" : "setup.intro"))
+            VStack(spacing: 0) {
+                row(icon: "shippingbox", title: L10n.string("setup.engine"), detail: L10n.string("setup.engine.detail"), ready: store.engineReady)
+                Divider().padding(.leading, 52)
+                row(icon: "cpu", title: L10n.string("setup.model"), detail: store.model == store.defaultModel.path || !store.modelReady ? L10n.string("setup.model.detail") : store.model, ready: store.modelReady) {
+                    if !store.modelReady && !store.setupRunning { Button(L10n.string("setup.model.choose")) { store.chooseModelFolder() }.buttonStyle(.link).font(.caption) }
+                }
+            }.background(Color.secondary.opacity(0.07), in: RoundedRectangle(cornerRadius: 12))
+            if store.setupRunning {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(store.setupStep).font(.callout)
+                    if let fraction = store.setupFraction { ProgressView(value: fraction) } else { ProgressView().progressViewStyle(.linear) }
+                }
+            }
+            if let error = store.setupError { Text(error).font(.callout).foregroundStyle(.orange).textSelection(.enabled) }
+            HStack {
+                if FileManager.default.fileExists(atPath: store.setupLog.path) {
+                    Button(L10n.string("setup.showLog")) { NSWorkspace.shared.open(store.setupLog) }
+                }
+                Spacer()
+                if store.setupRunning { Button(L10n.string("action.cancel")) { store.cancelSetup() } }
+                else {
+                    Button(L10n.string(store.setupError != nil ? "setup.retry" : updating ? "setup.update" : store.engineReady ? "setup.downloadModel" : "setup.install")) { Task { await store.install() } }
+                        .buttonStyle(.borderedProminent).controlSize(.large).keyboardShortcut(.defaultAction)
+                }
+            }
+            Text(L10n.string("setup.footer"))
+                .font(.caption).foregroundStyle(.secondary)
+        }.padding(40).frame(maxWidth: 640).frame(maxWidth: .infinity, maxHeight: .infinity)
+            .frame(minWidth: 1020, minHeight: 650)
+    }
+    func row(icon: String, title: String, detail: String, ready: Bool, @ViewBuilder extra: () -> some View = { EmptyView() }) -> some View {
+        HStack(alignment: .top, spacing: 14) {
+            Image(systemName: icon).font(.title2).foregroundStyle(Color.accentColor).frame(width: 24)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title).font(.headline)
+                Text(detail).font(.caption).foregroundStyle(.secondary).lineLimit(2).truncationMode(.middle)
+                extra()
+            }
+            Spacer()
+            if ready { Label(L10n.string("setup.ready"), systemImage: "checkmark.circle.fill").foregroundStyle(.green).font(.callout) }
+        }.padding(14)
+    }
+}
+
+struct RootView: View {
+    @ObservedObject var store = SearchStore.shared
+    var body: some View { if store.setupNeeded { SetupView() } else { MainView() } }
+}
+
 struct MainView: View {
     @ObservedObject var store = SearchStore.shared
+    @ObservedObject var localization = AppLocalization.shared
     @FocusState var searchFocus: Bool
     @State var removing: Source?
     @State var managing: Source?
@@ -208,10 +430,10 @@ struct MainView: View {
             VStack(alignment: .leading, spacing: 20) {
                 HStack(spacing: 10) {
                     Image(systemName: "sparkle.magnifyingglass").font(.system(size: 27)).foregroundStyle(Color.accentColor)
-                    VStack(alignment: .leading) { Text("Local Search").font(.title3.bold()); Text("Votre Mac, retrouvé.").font(.caption).foregroundStyle(.secondary) }
+                    VStack(alignment: .leading) { Text("Local Search").font(.title3.bold()); Text(L10n.string("app.tagline")).font(.caption).foregroundStyle(.secondary) }
                 }.padding(.top, 14)
-                Button { store.sourceID = "" } label: { Label("Toutes les sources", systemImage: "square.stack.3d.up") }.buttonStyle(.plain)
-                HStack { Text("DOSSIERS AUTORISÉS").font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary); Spacer(); Button { store.chooseFolder() } label: { Image(systemName: "plus") }.buttonStyle(.plain).help("Ajouter un dossier") }
+                Button { store.sourceID = "" } label: { Label(L10n.string("source.all"), systemImage: "square.stack.3d.up") }.buttonStyle(.plain)
+                HStack { Text(L10n.string("source.authorized")).font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary); Spacer(); Button { store.chooseFolder() } label: { Image(systemName: "plus") }.buttonStyle(.plain).help(L10n.string("action.addFolder")) }
                 ScrollView {
                     VStack(alignment: .leading, spacing: 8) {
                         ForEach(store.status?.sources ?? []) { source in
@@ -222,62 +444,62 @@ struct MainView: View {
                                         Text(source.name).font(.system(size: 13, weight: .medium)).lineLimit(1)
                                         HStack(spacing: 5) {
                                             Circle().fill(source.phase == "ready" ? Color.green : source.phase == "error" ? .red : .orange).frame(width: 5, height: 5)
-                                            Text("\(source.phaseLabel) · \(source.files) fichiers").font(.caption2).foregroundStyle(.secondary)
+                                            Text(L10n.string("source.status", source.phaseLabel, L10n.string("count.files", source.files))).font(.caption2).foregroundStyle(.secondary)
                                         }
                                     }
                                     Spacer(minLength: 0)
                                 }.padding(10).background(store.sourceID == source.id ? Color.accentColor.opacity(0.10) : Color.clear, in: RoundedRectangle(cornerRadius: 9))
                             }.buttonStyle(.plain).contextMenu {
                                 Text(source.path)
-                                Text(source.kinds.joined(separator: ", "))
+                                Text(source.kinds.map { L10n.assetKind($0) }.joined(separator: ", "))
                                 if let error = source.error { Text(error) }
-                                Button("Gérer l’accès…") { managing = source }
-                                Button("Révéler dans le Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: source.path)]) }
-                                Button("Retirer l’accès…", role: .destructive) { removing = source }
+                                Button(L10n.string("action.manageAccess.more")) { managing = source }
+                                Button(L10n.string("action.reveal")) { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: source.path)]) }
+                                Button(L10n.string("action.revoke.more"), role: .destructive) { removing = source }
                             }
                         }
                     }
                 }
                 Spacer(minLength: 0)
                 Divider()
-                SettingsLink { Label("Réglages", systemImage: "gearshape") }.buttonStyle(.plain)
-                Button { store.showConnections = true } label: { Label("Connecter un assistant", systemImage: "point.3.connected.trianglepath.dotted") }.buttonStyle(.plain)
+                SettingsLink { Label(L10n.string("settings.title"), systemImage: "gearshape") }.buttonStyle(.plain)
+                Button { store.showConnections = true } label: { Label(L10n.string("assistant.connect"), systemImage: "point.3.connected.trianglepath.dotted") }.buttonStyle(.plain)
                 VStack(alignment: .leading, spacing: 5) {
-                    Label("Indexation locale", systemImage: "lock.shield").font(.caption.bold())
-                    Text("\(store.status?.chunks ?? 0) éléments · \(store.status?.device.uppercased() ?? "DÉMARRAGE")").font(.caption2).foregroundStyle(.secondary)
+                    Label(L10n.string("index.local"), systemImage: "lock.shield").font(.caption.bold())
+                    Text(L10n.string("source.status", L10n.string("count.items", store.status?.chunks ?? 0), store.status?.device.uppercased() ?? L10n.string("index.starting"))).font(.caption2).foregroundStyle(.secondary)
                 }
             }.padding(18).frame(minWidth: 230).background(Color(nsColor: .windowBackgroundColor))
         } detail: {
             VStack(spacing: 0) {
                 VStack(alignment: .leading, spacing: 14) {
-                    HStack { Text("Retrouvez ce que vous avez en tête.").font(.system(size: 22, weight: .semibold)); Spacer() }
+                    HStack { Text(L10n.string("search.heading")).font(.system(size: 22, weight: .semibold)); Spacer() }
                     HStack(spacing: 12) {
                         Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                        TextField("Une fonction, un document, une image…", text: $store.query).textFieldStyle(.plain).focused($searchFocus).onSubmit { Task { await store.search() } }
+                        TextField(L10n.string("search.placeholder"), text: $store.query).textFieldStyle(.plain).focused($searchFocus).onSubmit { Task { await store.search() } }
                         if store.busy { ProgressView().controlSize(.small) }
-                        Button("Rechercher") { Task { await store.search() } }.buttonStyle(.borderedProminent).disabled(store.busy || store.query.isEmpty)
+                        Button(L10n.string("action.search")) { Task { await store.search() } }.buttonStyle(.borderedProminent).disabled(store.busy || store.query.isEmpty)
                     }.padding(12).background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12)).overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.primary.opacity(0.08)))
                     HStack {
-                        Picker("Type", selection: $store.assetKind) {
-                            Text("Tout").tag(""); Text("Code").tag("code"); Text("Documents").tag("documents"); Text("Images").tag("images")
+                        Picker(L10n.string("search.type"), selection: $store.assetKind) {
+                            Text(L10n.string("type.all")).tag(""); Text(L10n.string("type.code")).tag("code"); Text(L10n.string("type.documents")).tag("documents"); Text(L10n.string("type.images")).tag("images")
                         }.pickerStyle(.segmented).frame(maxWidth: 390)
                         Spacer()
-                        if let latency = store.latency { Text("\(store.results.count) résultats · \(Int(latency)) ms").font(.caption).foregroundStyle(.secondary) }
+                        if let latency = store.latency { Text(L10n.string("search.summary", L10n.string("count.results", store.results.count), Int(latency))).font(.caption).foregroundStyle(.secondary) }
                     }
                     if let error = store.error { Text(error).font(.caption).foregroundStyle(.orange).textSelection(.enabled) }
                 }.padding(24)
                 Divider()
                 if store.status?.sources.isEmpty ?? true {
                     ContentUnavailableView {
-                        Label("Choisissez où chercher", systemImage: "folder.badge.plus")
+                        Label(L10n.string("source.empty.title"), systemImage: "folder.badge.plus")
                     } description: {
-                        Text("Autorisez un dossier et choisissez le code, les documents ou les images à indexer. Vous pourrez retirer cet accès à tout moment.")
-                    } actions: { Button("Ajouter un dossier") { store.chooseFolder() }.buttonStyle(.borderedProminent) }
+                        Text(L10n.string("source.empty.description"))
+                    } actions: { Button(L10n.string("action.addFolder")) { store.chooseFolder() }.buttonStyle(.borderedProminent) }
                 } else if store.results.isEmpty {
                     ContentUnavailableView {
-                        Label(store.latency == nil ? "Cherchez avec vos mots" : "Aucun résultat", systemImage: "sparkle.magnifyingglass")
+                        Label(store.latency == nil ? L10n.string("search.empty.title") : L10n.string("search.noResults.title"), systemImage: "sparkle.magnifyingglass")
                     } description: {
-                        Text(store.latency == nil ? "« Où est gérée l’authentification ? »\n« Le compte rendu de réunion »\n« Une capture avec un graphique bleu »" : "Essayez une autre description ou vérifiez que l’indexation est terminée.")
+                        Text(store.latency == nil ? L10n.string("search.examples") : L10n.string("search.noResults.description"))
                     }
                 } else {
                     HSplitView {
@@ -294,7 +516,7 @@ struct MainView: View {
                             }
                         }.listStyle(.inset).frame(minWidth: 260, idealWidth: 310)
                         if let hit = store.selectedHit { ResultDetail(hit: hit).id(hit.id).frame(minWidth: 320) }
-                        else { Text("Sélectionnez un résultat").foregroundStyle(.secondary).frame(maxWidth: .infinity, maxHeight: .infinity) }
+                        else { Text(L10n.string("search.selectResult")).foregroundStyle(.secondary).frame(maxWidth: .infinity, maxHeight: .infinity) }
                     }
                 }
             }.background(Color(nsColor: .textBackgroundColor))
@@ -304,10 +526,10 @@ struct MainView: View {
         .toolbar {
             ToolbarItemGroup {
                 if let source = store.status?.sources.first(where: { $0.id == store.sourceID }) {
-                    Button { managing = source } label: { Label("Gérer l’accès", systemImage: "slider.horizontal.3") }
+                    Button { managing = source } label: { Label(L10n.string("action.manageAccess"), systemImage: "slider.horizontal.3") }
                 }
-                Button { store.chooseFolder() } label: { Label("Ajouter", systemImage: "folder.badge.plus") }
-                Button { Task { await store.reindex() } } label: { Label("Actualiser", systemImage: "arrow.clockwise") }
+                Button { store.chooseFolder() } label: { Label(L10n.string("action.add"), systemImage: "folder.badge.plus") }
+                Button { Task { await store.reindex() } } label: { Label(L10n.string("action.refresh"), systemImage: "arrow.clockwise") }
                 Button { store.showConnections = true } label: { Label("MCP", systemImage: "point.3.connected.trianglepath.dotted") }
             }
         }
@@ -316,26 +538,26 @@ struct MainView: View {
             VStack(alignment: .leading, spacing: 18) {
                 Text(source.name).font(.title2.bold())
                 Text(source.path).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
-                Text("Types autorisés : \(source.kinds.map { $0 == "code" ? "code" : $0 == "images" ? "images" : "documents" }.joined(separator: ", "))")
-                Text("\(source.phaseLabel) · \(source.files) fichiers · \(source.chunks) éléments").foregroundStyle(.secondary)
-                if !source.excludes.isEmpty { Text("Exclusions\n" + source.excludes.joined(separator: "\n")).font(.system(.caption, design: .monospaced)).textSelection(.enabled) }
+                Text(L10n.string("source.types", source.kinds.map { L10n.assetKind($0) }.joined(separator: ", ")))
+                Text(L10n.string("source.summary", source.phaseLabel, L10n.string("count.files", source.files), L10n.string("count.items", source.chunks))).foregroundStyle(.secondary)
+                if !source.excludes.isEmpty { Text(L10n.string("source.exclusions") + "\n" + source.excludes.joined(separator: "\n")).font(.system(.caption, design: .monospaced)).textSelection(.enabled) }
                 if let error = source.error { Text(error).font(.caption).foregroundStyle(.orange) }
                 if let skipped = source.last_sync?.skipped_files, !skipped.isEmpty {
-                    Text("\(skipped.count) fichiers n’ont pas pu être lus").font(.headline)
+                    Text(L10n.string("count.unreadableFiles", skipped.count)).font(.headline)
                     ScrollView { Text(skipped.prefix(10).map { "\($0.path) : \($0.error)" }.joined(separator: "\n")).font(.caption).textSelection(.enabled) }.frame(maxHeight: 120)
                 }
-                Text("Pour modifier les types ou les exclusions, retirez cette source puis ajoutez-la avec les nouveaux réglages.").font(.caption).foregroundStyle(.secondary)
+                Text(L10n.string("source.changeHelp")).font(.caption).foregroundStyle(.secondary)
                 HStack {
-                    Button("Retirer l’accès…", role: .destructive) { managing = nil; removing = source }
-                    Spacer(); Button("Fermer") { managing = nil }.keyboardShortcut(.cancelAction)
+                    Button(L10n.string("action.revoke.more"), role: .destructive) { managing = nil; removing = source }
+                    Spacer(); Button(L10n.string("action.close")) { managing = nil }.keyboardShortcut(.cancelAction)
                 }
             }.padding(28).frame(width: 550)
         }
         .sheet(isPresented: Binding(get: { store.addingPath != nil }, set: { if !$0 { store.addingPath = nil } })) { if let path = store.addingPath { AddSourceView(path: path) } }
-        .alert("Retirer l’accès à ce dossier ?", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } })) {
-            Button("Annuler", role: .cancel) { removing = nil }
-            Button("Retirer", role: .destructive) { if let source = removing { Task { await store.remove(source) } }; removing = nil }
-        } message: { Text("Les fichiers restent en place. L’accès MCP sera révoqué et les données de l’index seront supprimées.") }
+        .alert(L10n.string("source.revoke.title"), isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } })) {
+            Button(L10n.string("action.cancel"), role: .cancel) { removing = nil }
+            Button(L10n.string("action.remove"), role: .destructive) { if let source = removing { Task { await store.remove(source) } }; removing = nil }
+        } message: { Text(L10n.string("source.revoke.description")) }
         .onAppear { searchFocus = true }
         .background(Button("") { searchFocus = true }.keyboardShortcut("k").hidden())
     }
@@ -344,6 +566,7 @@ struct MainView: View {
 struct AddSourceView: View {
     let path: URL
     @ObservedObject var store = SearchStore.shared
+    @ObservedObject var localization = AppLocalization.shared
     @State var name = ""
     @State var code = true
     @State var documents = true
@@ -352,24 +575,24 @@ struct AddSourceView: View {
     @State var saving = false
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            Text("Autoriser un dossier").font(.title2.bold())
+            Text(L10n.string("folder.authorize")).font(.title2.bold())
             Text(path.path).font(.system(.caption, design: .monospaced)).textSelection(.enabled).foregroundStyle(.secondary)
-            TextField("Nom de la source", text: $name).textFieldStyle(.roundedBorder)
+            TextField(L10n.string("source.name"), text: $name).textFieldStyle(.roundedBorder)
             HStack(spacing: 25) {
-                Toggle("Code", isOn: $code); Toggle("Documents", isOn: $documents)
-                Toggle("Images", isOn: $images).disabled(!(store.status?.image_search ?? false))
+                Toggle(L10n.string("type.code"), isOn: $code); Toggle(L10n.string("type.documents"), isOn: $documents)
+                Toggle(L10n.string("type.images"), isOn: $images).disabled(!(store.status?.image_search ?? false))
             }
             if !(store.status?.image_search ?? false) {
-                Text("Activez l’encodage des images dans Réglages pour autoriser ce type.").font(.caption).foregroundStyle(.secondary)
+                Text(L10n.string("source.enableImages")).font(.caption).foregroundStyle(.secondary)
             }
-            Text("Exclusions supplémentaires").font(.headline)
-            Text("Un motif par ligne, par exemple archives/ ou **/confidentiel/**. Les fichiers ignorés par Git, les secrets .env et les liens symboliques sont déjà exclus.").font(.caption).foregroundStyle(.secondary)
+            Text(L10n.string("source.extraExclusions")).font(.headline)
+            Text(L10n.string("source.exclusionsHelp")).font(.caption).foregroundStyle(.secondary)
             TextEditor(text: $excludes).font(.system(.body, design: .monospaced)).frame(height: 100).border(Color.secondary.opacity(0.25))
-            Text("Ce dossier sera disponible dans l’app. Un assistant reste limité à son projet ; autorisez les dossiers supplémentaires dans Connecter un assistant → Accès par projet.").font(.caption).foregroundStyle(.secondary)
+            Text(L10n.string("source.scopeHelp")).font(.caption).foregroundStyle(.secondary)
             if let error = store.error { Text(error).font(.caption).foregroundStyle(.orange) }
             HStack {
-                Spacer(); Button("Annuler") { store.addingPath = nil }
-                Button(saving ? "Ajout…" : "Autoriser et indexer") {
+                Spacer(); Button(L10n.string("action.cancel")) { store.addingPath = nil }
+                Button(saving ? L10n.string("action.adding") : L10n.string("action.authorizeIndex")) {
                     saving = true
                     Task {
                         let kinds = [(code, "code"), (documents, "documents"), (images, "images")].filter { $0.0 }.map { $0.1 }
@@ -385,14 +608,19 @@ struct AddSourceView: View {
 struct ResultDetail: View {
     let hit: Hit
     @ObservedObject var store = SearchStore.shared
+    @ObservedObject var localization = AppLocalization.shared
     @State var image: NSImage?
     @State var text = ""
     @State var error: String?
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack { Text(hit.symbol).font(.headline).lineLimit(2); Spacer(); Button { NSWorkspace.shared.activateFileViewerSelecting([hit.url]) } label: { Image(systemName: "folder") }.help("Révéler dans le Finder") }
+            HStack { Text(hit.symbol).font(.headline).lineLimit(2); Spacer(); Button { NSWorkspace.shared.activateFileViewerSelecting([hit.url]) } label: { Image(systemName: "folder") }.help(L10n.string("action.reveal")) }
             Text("\(hit.source_name) / \(hit.path)").font(.system(.caption, design: .monospaced)).foregroundStyle(.secondary).textSelection(.enabled)
-            if hit.asset_kind != "images" { Text(hit.line_origin == "extracted_text" ? "Extrait du document · lignes \(hit.start_line)–\(hit.end_line) du texte extrait" : "Lignes \(hit.start_line)–\(hit.end_line)").font(.caption2).foregroundStyle(.secondary) }
+            if hit.copyCount > 0 {
+                Label(L10n.string("count.copies", hit.copyCount), systemImage: "doc.on.doc").font(.caption2).foregroundStyle(.secondary)
+                    .help((hit.duplicates ?? []).map(\.path).joined(separator: "\n"))
+            }
+            if hit.asset_kind != "images" { Text(hit.line_origin == "extracted_text" ? L10n.string("preview.extractedLines", hit.start_line, hit.end_line) : L10n.string("preview.lines", hit.start_line, hit.end_line)).font(.caption2).foregroundStyle(.secondary) }
             Divider()
             if let error { Text(error).foregroundStyle(.orange).font(.caption) }
             ScrollView([.vertical, .horizontal]) {
@@ -421,6 +649,7 @@ struct ResultDetail: View {
 
 struct SettingsView: View {
     @ObservedObject var store = SearchStore.shared
+    @ObservedObject var localization = AppLocalization.shared
     @State var options = ModelOptions()
     @State var loaded = false
     @State var saving = false
@@ -429,65 +658,74 @@ struct SettingsView: View {
     var imageSources: Bool { store.status?.sources.contains { $0.kinds.contains("images") } ?? false }
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            Text("Réglages").font(.title2.bold())
+            Text(L10n.string("settings.title")).font(.title2.bold())
             Form {
-                Section("Calcul et index") {
-                    Picker("Précision du modèle", selection: $options.precision) {
-                        Text("Float32 · valeur par défaut").tag("float32")
-                        Text("Bfloat16 · mémoire réduite").tag("bfloat16")
+                Section(L10n.string("settings.languageSection")) {
+                    Picker(L10n.string("settings.language"), selection: $localization.language) {
+                        Text(L10n.string("settings.languageSystem")).tag("")
+                        ForEach(localization.supportedLanguages, id: \.self) { language in
+                            Text(localization.name(for: language)).tag(language)
+                        }
                     }
-                    Text("Bfloat16 réduit la mémoire des poids de moitié. Le gain de vitesse dépend du Mac. Float16 n’est pas compatible avec ce modèle.").font(.caption).foregroundStyle(.secondary)
-                    Picker("Dimensions des vecteurs", selection: $options.dimensions) {
-                        Text("768 · qualité maximale").tag(768)
-                        Text("512 · vecteurs 1,5× plus petits").tag(512)
-                        Text("256 · vecteurs 3× plus petits").tag(256)
-                        Text("128 · vecteurs 6× plus petits").tag(128)
+                    Text(L10n.string("settings.languageHelp")).font(.caption).foregroundStyle(.secondary)
+                }
+                Section(L10n.string("settings.compute")) {
+                    Picker(L10n.string("settings.precision"), selection: $options.precision) {
+                        Text(L10n.string("settings.float32")).tag("float32")
+                        Text(L10n.string("settings.bfloat16")).tag("bfloat16")
                     }
-                    Text("Moins de dimensions réduit le stockage et le travail de comparaison. 128 diminue davantage la qualité, surtout pour les images. Le coût d’encodage reste identique.").font(.caption).foregroundStyle(.secondary)
+                    Text(L10n.string("settings.precisionHelp")).font(.caption).foregroundStyle(.secondary)
+                    Picker(L10n.string("settings.dimensions"), selection: $options.dimensions) {
+                        Text(L10n.string("settings.dimensions768")).tag(768)
+                        Text(L10n.string("settings.dimensions512")).tag(512)
+                        Text(L10n.string("settings.dimensions256")).tag(256)
+                        Text(L10n.string("settings.dimensions128")).tag(128)
+                    }
+                    Text(L10n.string("settings.dimensionsHelp")).font(.caption).foregroundStyle(.secondary)
                     HStack {
-                        Text("Tokens par entrée de texte")
+                        Text(L10n.string("settings.textTokens"))
                         Spacer()
                         TextField("4096", value: $options.max_tokens, format: .number.grouping(.never))
                             .labelsHidden().textFieldStyle(.roundedBorder).frame(width: 100)
                     }
-                    Text("De 256 à 8192. Défaut : 4096. Les longs textes sont découpés ; une limite plus élevée peut augmenter le temps de calcul et la mémoire.").font(.caption).foregroundStyle(.secondary)
+                    Text(L10n.string("settings.textTokensHelp")).font(.caption).foregroundStyle(.secondary)
                 }
-                Section("Images") {
-                    Toggle("Charger l’encodeur d’images", isOn: $options.images)
+                Section(L10n.string("type.images")) {
+                    Toggle(L10n.string("settings.loadImages"), isOn: $options.images)
                         .disabled(!options.image_encoder_available || imageSources)
-                    Text(imageSources ? "Des sources autorisent les images. Retirez ces sources avant de désactiver leur encodeur ; les fichiers restent en place." : options.image_encoder_available ? "Le mode texte seul consomme moins de mémoire. Les autorisations restent propres à chaque dossier." : "Le service a été lancé en mode texte seul. Relancez-le sans --text-only pour activer les images.")
+                    Text(imageSources ? L10n.string("settings.imageSourcesHelp") : options.image_encoder_available ? L10n.string("settings.textOnlyHelp") : L10n.string("settings.textOnlyServiceHelp"))
                         .font(.caption).foregroundStyle(.secondary)
-                    Picker("Détail des images", selection: $options.image_tokens) {
-                        Text("70 tokens · rapide").tag(70)
-                        Text("140 tokens").tag(140)
-                        Text("280 tokens · valeur par défaut").tag(280)
-                        Text("560 tokens").tag(560)
-                        Text("1120 tokens · détaillé").tag(1120)
+                    Picker(L10n.string("settings.imageDetail"), selection: $options.image_tokens) {
+                        Text(L10n.string("settings.image70")).tag(70)
+                        Text(L10n.string("settings.image140")).tag(140)
+                        Text(L10n.string("settings.image280")).tag(280)
+                        Text(L10n.string("settings.image560")).tag(560)
+                        Text(L10n.string("settings.image1120")).tag(1120)
                     }.disabled(!options.images)
-                    Text("Plus de tokens peut améliorer les détails visuels, avec davantage de calcul et de mémoire.").font(.caption).foregroundStyle(.secondary)
+                    Text(L10n.string("settings.imageDetailHelp")).font(.caption).foregroundStyle(.secondary)
                 }
-                Section("Recherche") {
-                    Picker("Type de requête", selection: $options.query_task) {
-                        Text("Automatique · selon la source").tag("auto")
-                        Text("Recherche de code").tag("code")
-                        Text("Recherche de documents et d’images").tag("search")
-                        Text("Questions et réponses").tag("question_answering")
-                        Text("Vérification de faits").tag("fact_checking")
+                Section(L10n.string("settings.search")) {
+                    Picker(L10n.string("settings.queryType"), selection: $options.query_task) {
+                        Text(L10n.string("settings.queryAuto")).tag("auto")
+                        Text(L10n.string("settings.queryCode")).tag("code")
+                        Text(L10n.string("settings.querySearch")).tag("search")
+                        Text(L10n.string("settings.queryQA")).tag("question_answering")
+                        Text(L10n.string("settings.queryFacts")).tag("fact_checking")
                     }
-                    Text("Adapte le préfixe envoyé au modèle. Automatique utilise le préfixe code pour les sources contenant uniquement du code, et le préfixe recherche pour les autres. Aucun texte n’est généré.").font(.caption).foregroundStyle(.secondary)
+                    Text(L10n.string("settings.queryHelp")).font(.caption).foregroundStyle(.secondary)
                 }
             }.formStyle(.grouped)
-            Text("Les changements de précision, dimensions, limite de texte ou encodage des images reconstruisent les index. Le type de requête s’applique immédiatement sans reconstruire les documents.").font(.caption).foregroundStyle(.secondary)
+            Text(L10n.string("settings.rebuildHelp")).font(.caption).foregroundStyle(.secondary)
             if let error { Text(error).font(.caption).foregroundStyle(.orange) }
-            if saved { Text("Réglages enregistrés.").font(.caption).foregroundStyle(.secondary) }
+            if saved { Text(L10n.string("settings.saved")).font(.caption).foregroundStyle(.secondary) }
             HStack {
-                Button("Valeurs par défaut") {
+                Button(L10n.string("action.defaults")) {
                     let available = options.image_encoder_available
                     options = ModelOptions(); options.image_encoder_available = available; options.images = available
                 }.disabled(!loaded)
                 Spacer()
                 if saving { ProgressView().controlSize(.small) }
-                Button("Enregistrer") {
+                Button(L10n.string("action.save")) {
                     saving = true; saved = false; error = nil
                     Task {
                         saved = await store.saveSettings(options)
@@ -505,7 +743,7 @@ struct SettingsView: View {
                     loaded = true
                 } catch {
                     self.error = error is DecodingError
-                        ? "Le service utilise une ancienne version. Quittez Local Search et relancez l’application reconstruite."
+                        ? L10n.string("service.oldVersion")
                         : error.localizedDescription
                 }
             }
@@ -515,6 +753,7 @@ struct SettingsView: View {
 
 struct ConnectionsView: View {
     @ObservedObject var store = SearchStore.shared
+    @ObservedObject var localization = AppLocalization.shared
     @State var copied = ""
     @State var tab = "connection"
     @AppStorage("mcpProjectPath") var project = ""
@@ -527,7 +766,7 @@ struct ConnectionsView: View {
 
     func chooseFolder(title: String) -> String? {
         let panel = NSOpenPanel()
-        panel.title = title; panel.prompt = "Choisir"
+        panel.title = title; panel.prompt = L10n.string("action.choose")
         panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.allowsMultipleSelection = false
         return panel.runModal() == .OK ? panel.url?.resolvingSymlinksInPath().path : nil
     }
@@ -544,54 +783,54 @@ struct ConnectionsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
-            Text("Le même moteur, dans vos assistants.").font(.title2.bold())
-            Picker("Assistant", selection: $tab) {
-                Text("Connexion").tag("connection"); Text("Accès par projet").tag("access")
+            Text(L10n.string("assistant.heading")).font(.title2.bold())
+            Picker(L10n.string("assistant.picker"), selection: $tab) {
+                Text(L10n.string("assistant.connection")).tag("connection"); Text(L10n.string("assistant.projectAccess")).tag("access")
             }.pickerStyle(.segmented)
-            Text("Par défaut, le MCP cherche uniquement dans le dossier du projet. Les autres dossiers nécessitent une autorisation propre à ce projet.").foregroundStyle(.secondary)
+            Text(L10n.string("assistant.scopeHelp")).foregroundStyle(.secondary)
             HStack {
-                Text(project.isEmpty ? "Projet : dossier de lancement de l’assistant" : project)
+                Text(project.isEmpty ? L10n.string("assistant.launchProject") : project)
                     .font(.system(.caption, design: .monospaced)).textSelection(.enabled).lineLimit(3)
                 Spacer()
-                Button("Choisir le projet…") {
-                    if let path = chooseFolder(title: "Choisir le projet de l’assistant") {
+                Button(L10n.string("assistant.chooseProject")) {
+                    if let path = chooseFolder(title: L10n.string("assistant.chooseProject.title")) {
                         project = path; copied = ""; Task { await loadAccess() }
                     }
                 }.disabled(saving || loading)
             }
             if tab == "connection" {
-                Text("Exécutez ces commandes, puis ouvrez une nouvelle session et vérifiez /mcp. Gardez Local Search ouvert. Le projet choisi est fixé dans la commande ; sans choix, le dossier de lancement est utilisé.").font(.callout).foregroundStyle(.secondary)
+                Text(L10n.string("assistant.commandsHelp")).font(.callout).foregroundStyle(.secondary)
                 ForEach(["codex", "claude"], id: \.self) { client in
                     VStack(alignment: .leading, spacing: 10) {
-                        HStack { Text(client == "codex" ? "Codex" : "Claude Code").font(.headline); Spacer(); Button(copied == client ? "Copié" : "Copier") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(store.connectionCommand(client, project: project), forType: .string); copied = client } }
+                        HStack { Text(client == "codex" ? "Codex" : "Claude Code").font(.headline); Spacer(); Button(copied == client ? L10n.string("action.copied") : L10n.string("action.copy")) { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(store.connectionCommand(client, project: project), forType: .string); copied = client } }
                         Text(store.connectionCommand(client, project: project)).font(.system(size: 11, design: .monospaced)).textSelection(.enabled)
                     }.padding(15).background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
                 }
-                if !project.isEmpty { Button("Utiliser le dossier de lancement") { project = ""; folders = []; copied = ""; error = nil; saved = false } }
+                if !project.isEmpty { Button(L10n.string("assistant.useLaunchFolder")) { project = ""; folders = []; copied = ""; error = nil; saved = false } }
             } else {
-                Text("Dossiers supplémentaires autorisés").font(.headline)
-                Text("Choisissez un dossier déjà indexé par l’app, ou un sous-dossier. L’autorisation reste enregistrée pour ce projet. Le MCP les recherche seulement sur demande explicite.").font(.caption).foregroundStyle(.secondary)
+                Text(L10n.string("assistant.extraFolders")).font(.headline)
+                Text(L10n.string("assistant.extraFoldersHelp")).font(.caption).foregroundStyle(.secondary)
                 if loading { ProgressView().controlSize(.small) }
-                else if folders.isEmpty { Text("Aucun : accès au projet uniquement.").font(.callout).foregroundStyle(.secondary) }
+                else if folders.isEmpty { Text(L10n.string("assistant.projectOnly")).font(.callout).foregroundStyle(.secondary) }
                 ScrollView {
                     VStack(alignment: .leading, spacing: 10) {
                         ForEach(folders, id: \.self) { path in
                             HStack {
                                 Text(path).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
                                 Spacer()
-                                Button("Retirer") { folders.removeAll { $0 == path }; saved = false; error = nil }.disabled(saving)
+                                Button(L10n.string("action.remove")) { folders.removeAll { $0 == path }; saved = false; error = nil }.disabled(saving)
                             }
                         }
                     }
                 }.frame(maxHeight: 150)
                 HStack {
-                    Button("Ajouter un dossier…") {
-                        if let path = chooseFolder(title: "Autoriser un dossier supplémentaire pour ce projet"), !folders.contains(path) {
+                    Button(L10n.string("action.addFolder.more")) {
+                        if let path = chooseFolder(title: L10n.string("assistant.authorizeFolder.title")), !folders.contains(path) {
                             folders.append(path); saved = false; error = nil
                         }
                     }
                     Spacer()
-                    Button(saving ? "Enregistrement…" : "Enregistrer les autorisations") {
+                    Button(saving ? L10n.string("action.saving") : L10n.string("assistant.saveAccess")) {
                         saving = true; error = nil; saved = false
                         Task {
                             do {
@@ -603,11 +842,11 @@ struct ConnectionsView: View {
                     }.buttonStyle(.borderedProminent)
                 }.disabled(project.isEmpty || saving || loading || !accessLoaded)
                 if let error { Text(error).font(.caption).foregroundStyle(.orange) }
-                if saved { Text("Autorisations enregistrées. Les retraits prennent effet immédiatement.").font(.caption).foregroundStyle(.secondary) }
-                if project.isEmpty { Text("Choisissez d’abord le projet.").font(.caption).foregroundStyle(.secondary) }
+                if saved { Text(L10n.string("assistant.accessSaved")).font(.caption).foregroundStyle(.secondary) }
+                if project.isEmpty { Text(L10n.string("assistant.chooseProjectFirst")).font(.caption).foregroundStyle(.secondary) }
             }
-            Text("L’index et le calcul restent sur ce Mac. Les extraits et images lus par un assistant peuvent être envoyés à son fournisseur.").font(.caption).foregroundStyle(.secondary)
-            HStack { Spacer(); Button("Fermer") { store.showConnections = false }.keyboardShortcut(.cancelAction) }
+            Text(L10n.string("assistant.privacyHelp")).font(.caption).foregroundStyle(.secondary)
+            HStack { Spacer(); Button(L10n.string("action.close")) { store.showConnections = false }.keyboardShortcut(.cancelAction) }
         }.padding(28).frame(width: 670).task { await loadAccess() }
     }
 }
@@ -615,17 +854,23 @@ struct ConnectionsView: View {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     var statusItem: NSStatusItem?
+    var languageSubscription: AnyCancellable?
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         statusItem?.button?.image = NSImage(systemSymbolName: "sparkle.magnifyingglass", accessibilityDescription: "Local Search")
+        languageSubscription = AppLocalization.shared.$language
+            .receive(on: RunLoop.main).sink { [weak self] _ in self?.updateMenu() }
+        updateMenu()
+        NSApp.activate(ignoringOtherApps: true)
+    }
+    func updateMenu() {
         let menu = NSMenu()
-        let show = NSMenuItem(title: "Ouvrir Local Search", action: #selector(showWindow), keyEquivalent: "")
+        let show = NSMenuItem(title: L10n.string("menu.open"), action: #selector(showWindow), keyEquivalent: "")
         show.target = self; menu.addItem(show)
         menu.addItem(.separator())
-        menu.addItem(NSMenuItem(title: "Quitter Local Search", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        menu.addItem(NSMenuItem(title: L10n.string("menu.quit"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         statusItem?.menu = menu
-        NSApp.activate(ignoringOtherApps: true)
     }
     @objc func showWindow() { NSApp.windows.first { $0.canBecomeMain }?.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true) }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
@@ -635,10 +880,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 @main
 struct LocalSearchApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
+    @ObservedObject var localization = AppLocalization.shared
     var body: some Scene {
-        Window("Local Search", id: "main") { MainView().tint(Color(red: 0.12, green: 0.40, blue: 0.35)) }
+        Window("Local Search", id: "main") { RootView().environment(\.locale, localization.locale).tint(Color(red: 0.12, green: 0.40, blue: 0.35)) }
             .defaultSize(width: 1180, height: 760)
-            .commands { CommandGroup(after: .newItem) { Button("Ajouter un dossier…") { SearchStore.shared.chooseFolder() }.keyboardShortcut("o") } }
-        Settings { SettingsView().tint(Color(red: 0.12, green: 0.40, blue: 0.35)) }
+            .commands { CommandGroup(after: .newItem) { Button(L10n.string("action.addFolder.more")) { SearchStore.shared.chooseFolder() }.keyboardShortcut("o") } }
+        Settings { SettingsView().environment(\.locale, localization.locale).tint(Color(red: 0.12, green: 0.40, blue: 0.35)) }
     }
 }

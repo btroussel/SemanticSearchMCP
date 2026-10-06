@@ -4,11 +4,12 @@ Local Search combines a native SwiftUI app, a general local HTTP service and a l
 
 ## Code map
 
-Python modules are under `src/local_code_search/`.
+Python modules are under `semantic_search/`.
 
 | File or directory | Responsibility |
 | --- | --- |
 | `cli.py` | Both `code-search` and `local-search` entry points; workspace and original modes |
+| `download.py` | Pinned, SHA-256-verified, resumable model download (`download-model`); the only network code |
 | `workspace.py` | Sources, persistent settings, shared service, authenticated HTTP API and source lifecycle |
 | `access.py` | Per-project MCP grants and allowed source prefixes |
 | `service.py` | Background workers, watches and the original HTTP API |
@@ -18,8 +19,9 @@ Python modules are under `src/local_code_search/`.
 | `settings.py` | Shared model-option defaults and validation |
 | `index.py` | SQLite metadata, embedding caches, FTS5, vector search and freshness |
 | `mcp_server.py` | Stdio HTTP bridge; no model loading |
-| `macos/Sources/LocalSearch/LocalSearch.swift` | SwiftUI app, service client and backend lifecycle |
-| `scripts/` | Development bundle build, real-model smoke, MCP check and retrieval benchmark |
+| `macos/Sources/LocalSearch/LocalSearch.swift` | SwiftUI app, first-launch setup, service client and backend lifecycle |
+| `macos/Sources/LocalSearch/Localization.swift`, `Resources/*.lproj/` | App language preference, resource lookup, translated interface and plural forms |
+| `scripts/` | Standalone/development app and disk-image build, real-model smoke, MCP check and retrieval benchmark |
 | `tests/` | Temporary-source fixture tests |
 
 ## Indexing and retrieval

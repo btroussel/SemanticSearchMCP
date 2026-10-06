@@ -44,9 +44,18 @@ Use `index` with the same `--repo`, `--model`, `--db`, device, dimensions, token
 
 The original service binds locally but does not use the general-service source/grant/bearer-key contract. It is for an explicitly selected repository. Original MCP connection and tool mappings are in [MCP/API](mcp.md#original-single-repository-connection).
 
+## Model download
+
+```sh
+.venv/bin/code-search download-model [--dest models/embeddinggemma-2] [--json]
+```
+
+Downloads the pinned `google/embeddinggemma-2` revision from Hugging Face, verifies each file's size and SHA-256, and publishes the folder only when complete. Interrupted downloads resume from `<dest>.partial`. An existing complete destination is reused; an incomplete or unrelated existing folder is left untouched and reported. `--json` prints progress lines for the Mac app.
+
 ## Command reference
 
 ```sh
+.venv/bin/code-search download-model --help
 .venv/bin/code-search --help
 .venv/bin/code-search workspace --help
 .venv/bin/code-search serve --help

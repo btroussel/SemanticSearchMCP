@@ -10,14 +10,14 @@ import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 
-from local_code_search.mcp_server import create_server
-from local_code_search.workspace import SourceRequest, Workspace
+from semantic_search.mcp_server import create_server
+from semantic_search.workspace import SourceRequest, Workspace
 from test_workspace import MultimodalFixture
 
 
 class AccessEmbedder(MultimodalFixture):
     def configuration(self):
-        from local_code_search.settings import ModelSettings
+        from semantic_search.settings import ModelSettings
         return {**ModelSettings().model_dump(), "dimensions": self.dimensions,
                 "images": self.images, "max_tokens": self.max_tokens}
 
@@ -48,7 +48,7 @@ def scoped(tmp_path):
 
 
 def create_app(workspace):
-    from local_code_search.workspace import create_workspace_app
+    from semantic_search.workspace import create_workspace_app
     return create_workspace_app(workspace)
 
 
@@ -95,7 +95,7 @@ def test_additional_grants_are_per_project_explicit_persistent_and_revocable(sco
     assert explicit.status_code == 200 and explicit.json()["results"]
     other_headers = {**app_headers, "X-Local-Search-Project": sibling.as_uri()}
     assert client.post("/search", headers=other_headers, json={"query": "authenticate_user", "source_id": extra["id"]}).status_code == 400
-    from local_code_search.access import ProjectAccess
+    from semantic_search.access import ProjectAccess
     assert ProjectAccess(workspace.state).get(str(project))["folders"] == [str(papers)]
     assert client.put("/mcp-access", headers=app_headers, json={"project": str(project), "folders": []}).status_code == 200
     assert client.get("/file", headers=headers, params={"source_id": extra["id"], "path": "auth.py"}).status_code == 400
@@ -141,7 +141,7 @@ def test_lexical_candidate_cap_does_not_hide_project_behind_sibling_matches(scop
 
 def test_mcp_bridge_binds_launch_project_and_rejects_old_unscoped_service(scoped, monkeypatch):
     workspace, client, project, sibling, papers, source, extra, app_headers, headers = scoped
-    monkeypatch.setattr("local_code_search.mcp_server.httpx.Client", lambda **kwargs: client)
+    monkeypatch.setattr("semantic_search.mcp_server.httpx.Client", lambda **kwargs: client)
     monkeypatch.chdir(project)
     server = create_server("http://127.0.0.1:8766", workspace.state / "access.key", general=True)
     async def exercise():
@@ -155,7 +155,7 @@ def test_mcp_bridge_binds_launch_project_and_rejects_old_unscoped_service(scoped
     class OldClient:
         def request(self, *args, **kwargs):
             return httpx.Response(200, json={"sources": []}, request=httpx.Request("GET", "http://127.0.0.1/sources"))
-    monkeypatch.setattr("local_code_search.mcp_server.httpx.Client", lambda **kwargs: OldClient())
+    monkeypatch.setattr("semantic_search.mcp_server.httpx.Client", lambda **kwargs: OldClient())
     old = create_server("http://127.0.0.1:8766", general=True, project=project)
     with pytest.raises(Exception, match="Restart the Local Search"):
         asyncio.run(old.call_tool("list_sources", {}))

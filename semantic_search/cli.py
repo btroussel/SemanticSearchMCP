@@ -49,6 +49,9 @@ def main():
     p.add_argument("--text-only", action="store_true")
     p.add_argument("--max-tokens", type=token_limit, default=None,
                    help="Override the saved maximum input tokens (256–8192; initial default: 4096)")
+    p = commands.add_parser("download-model", help="Download the pinned EmbeddingGemma 2 checkpoint")
+    p.add_argument("--dest", type=Path, default=Path("models/embeddinggemma-2"))
+    p.add_argument("--json", action="store_true", help="Report progress as JSON lines on stdout")
     p = commands.add_parser("search")
     p.add_argument("query")
     p.add_argument("--url", default="http://127.0.0.1:8765")
@@ -71,6 +74,9 @@ def main():
         workspace = Workspace(args.state, Embedder(args.model, args.device, images=not args.text_only),
                               args.interval, not args.no_watch, max_tokens=args.max_tokens)
         uvicorn.run(create_workspace_app(workspace), host="127.0.0.1", port=args.port)
+    elif args.command == "download-model":
+        from .download import main as download
+        download(args.dest, args.json)
     elif args.command in {"search", "status"}:
         import httpx
         with httpx.Client(base_url=args.url, timeout=120, trust_env=False) as client:

@@ -502,54 +502,6 @@ wheels = [
 ]
 
 [[package]]
-name = "local-code-search"
-version = "0.2.0"
-source = { editable = "." }
-dependencies = [
-    { name = "fastapi" },
-    { name = "httpx" },
-    { name = "mcp" },
-    { name = "numpy" },
-    { name = "pathspec" },
-    { name = "pillow" },
-    { name = "pypdf" },
-    { name = "python-docx" },
-    { name = "sentence-transformers" },
-    { name = "torchvision" },
-    { name = "transformers" },
-    { name = "tree-sitter" },
-    { name = "tree-sitter-language-pack" },
-    { name = "uvicorn" },
-    { name = "watchfiles" },
-]
-
-[package.optional-dependencies]
-dev = [
-    { name = "pytest" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "fastapi", specifier = ">=0.115,<1" },
-    { name = "httpx", specifier = ">=0.28,<1" },
-    { name = "mcp", specifier = ">=1.26,<2" },
-    { name = "numpy", specifier = ">=2,<3" },
-    { name = "pathspec", specifier = ">=0.12,<2" },
-    { name = "pillow", specifier = ">=12,<13" },
-    { name = "pypdf", specifier = ">=6,<7" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8,<10" },
-    { name = "python-docx", specifier = ">=1.2,<2" },
-    { name = "sentence-transformers", specifier = ">=6.1,<7" },
-    { name = "torchvision", specifier = ">=0.29,<0.30" },
-    { name = "transformers", specifier = ">=5.18,<6" },
-    { name = "tree-sitter", specifier = ">=0.25,<0.27" },
-    { name = "tree-sitter-language-pack", specifier = ">=0.10,<1" },
-    { name = "uvicorn", specifier = ">=0.30,<1" },
-    { name = "watchfiles", specifier = ">=1,<2" },
-]
-provides-extras = ["dev"]
-
-[[package]]
 name = "lxml"
 version = "6.1.3"
 source = { registry = "https://pypi.org/simple" }
@@ -1821,6 +1773,54 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/5c/a2/5b7d5270621ab7cfa3f7766067bf95dc360b5efb6394694e8143b4156e2b/scipy-1.18.1-cp315-cp315t-win_amd64.whl", hash = "sha256:5632e3ae3d09197c446310cd5187de63e28448ce22f0f67b2b93d97503c0c230", size = 37408295, upload-time = "2026-08-21T23:28:40.724Z" },
     { url = "https://files.pythonhosted.org/packages/63/ad/741c19fcb66755ff953daf9243af8480e4bf3d7fbe57583c178c7d2b6b51/scipy-1.18.1-cp315-cp315t-win_arm64.whl", hash = "sha256:eda632a7981f69730d6281f451db9c1c370993a2c0d7ddb43e2a809a2862b83a", size = 25319710, upload-time = "2026-08-21T23:28:45.713Z" },
 ]
+
+[[package]]
+name = "semantic-search"
+version = "0.3.0"
+source = { editable = "." }
+dependencies = [
+    { name = "fastapi" },
+    { name = "httpx" },
+    { name = "mcp" },
+    { name = "numpy" },
+    { name = "pathspec" },
+    { name = "pillow" },
+    { name = "pypdf" },
+    { name = "python-docx" },
+    { name = "sentence-transformers" },
+    { name = "torchvision" },
+    { name = "transformers" },
+    { name = "tree-sitter" },
+    { name = "tree-sitter-language-pack" },
+    { name = "uvicorn" },
+    { name = "watchfiles" },
+]
+
+[package.optional-dependencies]
+dev = [
+    { name = "pytest" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "fastapi", specifier = ">=0.115,<1" },
+    { name = "httpx", specifier = ">=0.28,<1" },
+    { name = "mcp", specifier = ">=1.26,<2" },
+    { name = "numpy", specifier = ">=2,<3" },
+    { name = "pathspec", specifier = ">=0.12,<2" },
+    { name = "pillow", specifier = ">=12,<13" },
+    { name = "pypdf", specifier = ">=6,<7" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8,<10" },
+    { name = "python-docx", specifier = ">=1.2,<2" },
+    { name = "sentence-transformers", specifier = ">=6.1,<7" },
+    { name = "torchvision", specifier = ">=0.29,<0.30" },
+    { name = "transformers", specifier = ">=5.18,<6" },
+    { name = "tree-sitter", specifier = ">=0.25,<0.27" },
+    { name = "tree-sitter-language-pack", specifier = ">=0.10,<1" },
+    { name = "uvicorn", specifier = ">=0.30,<1" },
+    { name = "watchfiles", specifier = ">=1,<2" },
+]
+provides-extras = ["dev"]
 
 [[package]]
 name = "sentence-transformers"

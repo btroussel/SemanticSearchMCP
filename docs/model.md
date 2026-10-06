@@ -1,10 +1,10 @@
 # Model settings
 
-The shared runtime uses the local `models/embeddinggemma-2/` checkpoint and performs inference offline. The normal Mac app loads text and vision encoders; audio is omitted. The original single-repository mode loads text only.
+The shared runtime uses a local EmbeddingGemma 2 checkpoint and performs inference offline: the app's downloaded copy in `~/Library/Application Support/Local Search/models/embeddinggemma-2/` (or a folder chosen at setup), and `models/embeddinggemma-2/` for development commands. `code-search download-model` fetches the pinned revision. The normal Mac app loads text and vision encoders; audio is omitted. The original single-repository mode loads text only.
 
 ## Options and tradeoffs
 
-Open **Réglages** in the sidebar or press **Command-comma** to configure the shared model:
+Open **Settings** in the sidebar or press **Command-comma** to configure the shared model:
 
 | Option | Choices and default | Tradeoff |
 | --- | --- | --- |

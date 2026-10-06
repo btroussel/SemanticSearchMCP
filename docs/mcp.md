@@ -4,7 +4,7 @@ The general service runs on loopback port **8766** with a private bearer key. Th
 
 ## General-service connection
 
-The **Connecter un assistant / MCP** panel provides commands with your absolute paths. Replace the example paths below with the ones shown in the app.
+The **Connect an assistant / MCP** panel provides commands with your absolute paths. Replace the example paths below with the ones shown in the app.
 
 ```sh
 codex mcp add local-search -- \
@@ -33,7 +33,7 @@ Start a fresh assistant session and check `/mcp`. Official references: [Codex MC
 
 The MCP defaults to **the project folder only**. The bridge binds to its launch directory, or the explicit `mcp --general --project /absolute/project` option. `list_sources` reports that project and the allowed path prefixes within each accessible index. Verify the reported project: clients that launch MCP from another directory should use `--project`. The project must already be covered by an indexing source in the app; otherwise MCP searches return no results.
 
-In **Connecter un assistant → Accès par projet**, choose the project, add extra folders (or subfolders of existing sources), and choose **Enregistrer les autorisations**. Grants persist for that project only. Remove a folder and save to revoke its MCP access immediately. Removing an indexing source also removes its additional-folder grants. Adding a folder for indexing does not grant every assistant access to it.
+In **Connect an assistant → Project access**, choose the project, add extra folders (or subfolders of existing sources), and choose **Save permissions**. Grants persist for that project only. Remove a folder and save to revoke its MCP access immediately. Removing an indexing source also removes its additional-folder grants. Adding a folder for indexing does not grant every assistant access to it.
 
 An omitted `source_id` searches only the project, even after extra folders are granted. To search an extra folder, pass its `source_id` from `list_sources` and optionally a relative `path_filter`. The backend enforces the allowed prefixes for searches, file reads, symbol expansion and image previews; passing a different source ID cannot bypass them. An explicit source may contain both project and granted subfolder scopes. File paths and filters remain relative to the indexing source, e.g. `my-project/` when the source is `~/Code`.
 
