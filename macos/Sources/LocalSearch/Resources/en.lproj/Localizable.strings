@@ -119,7 +119,7 @@
 "setup.intro" = "Before the first search, Local Search downloads its search engine and model. This happens once.";
 "setup.updateIntro" = "The search engine needs a quick update before you continue.";
 "setup.engine" = "Search engine";
-"setup.engine.detail" = "Python 3.12 and its libraries · about 1.4 GB";
+"setup.engine.detail" = "Python 3.12 and its libraries · about 1.7 GB";
 "setup.model" = "EmbeddingGemma 2 model";
 "setup.model.detail" = "By Google · Apache-2.0 · 1.5 GB";
 "setup.model.choose" = "Use a folder I already have…";
@@ -134,7 +134,7 @@
 "setup.retry" = "Try again";
 "setup.footer" = "Python comes from python-build-standalone on GitHub, libraries from PyPI and the model from Hugging Face. Interrupted downloads resume. Afterwards, indexing and search run offline. Everything is stored in ~/Library/Application Support/Local Search.";
 "setup.step.python" = "Downloading Python 3.12…";
-"setup.step.libraries" = "Downloading and installing libraries (about 1.3 GB)…";
+"setup.step.libraries" = "Downloading and installing libraries (about 1.6 GB)…";
 "setup.step.app" = "Installing Local Search…";
 "setup.step.model" = "Downloading the EmbeddingGemma 2 model…";
 "setup.step.modelProgress" = "Downloading the EmbeddingGemma 2 model… %1$.2f of %2$.2f GB";

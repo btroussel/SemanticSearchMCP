@@ -24,7 +24,8 @@ def main():
         p.add_argument("--repo", type=Path, required=True)
         p.add_argument("--model", type=Path, required=True)
         p.add_argument("--db", type=Path, required=True)
-        p.add_argument("--device", default="auto", choices=["auto", "cpu", "mps", "cuda"])
+        p.add_argument("--device", default="auto", choices=["auto", "mlx", "cuda", "mps", "cpu"],
+                       help="auto prefers MLX on Apple silicon, then CUDA, MPS and CPU (default: auto)")
         p.add_argument("--dimensions", type=int, default=768, choices=[128, 256, 512, 768])
         p.add_argument("--max-tokens", type=token_limit, default=DEFAULT_MAX_TOKENS,
                        help="Maximum input tokens, including titles/prefixes (256–8192; default: 4096)")
@@ -44,7 +45,8 @@ def main():
     p.add_argument("--state", type=Path, default=Path.home() / "Library/Application Support/Local Search")
     p.add_argument("--port", type=int, default=8766)
     p.add_argument("--interval", type=float, default=300)
-    p.add_argument("--device", default="auto", choices=["auto", "cpu", "mps", "cuda"])
+    p.add_argument("--device", default="auto", choices=["auto", "mlx", "cuda", "mps", "cpu"],
+                   help="auto prefers MLX on Apple silicon, then CUDA, MPS and CPU (default: auto)")
     p.add_argument("--no-watch", action="store_true")
     p.add_argument("--text-only", action="store_true")
     p.add_argument("--max-tokens", type=token_limit, default=None,

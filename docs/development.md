@@ -32,7 +32,9 @@ Translations are in `macos/Sources/LocalSearch/Resources/<lang>.lproj/`. To add 
 .venv/bin/code-search workspace --model models/embeddinggemma-2
 ```
 
-This is the service the app runs, on port 8766 with state in `~/Library/Application Support/Local Search/`. For experiments, use a disposable `--state` directory, another `--port` and temporary folders. `--device cpu` avoids MPS and `--text-only` disables images. See `code-search <command> --help` for all options.
+This is the service the app runs, on port 8766 with state in `~/Library/Application Support/Local Search/`. For experiments, use a disposable `--state` directory, another `--port` and temporary folders. `--text-only` disables images.
+
+The model runs on [MLX](https://github.com/ml-explore/mlx) on Apple Silicon and on PyTorch elsewhere (CUDA, then MPS, then CPU). If MLX cannot load, the service logs a warning and uses PyTorch. `--device mlx|cuda|mps|cpu` forces a runtime; `--device mps` gives the PyTorch path on a Mac. Both runtimes produce interchangeable vectors, so switching does not rebuild indexes. EmbeddingGemma 2 support in `mlx-vlm` is pinned to a merged commit in `pyproject.toml` until it is released on PyPI. See `code-search <command> --help` for all options.
 
 ### Single-repository mode
 
@@ -79,7 +81,8 @@ Python modules are in `semantic_search/`.
 | `service.py` | Background indexing workers; original single-repository service |
 | `files.py` | File discovery, ignore rules, confined reads, PDF/DOCX extraction, images |
 | `chunks.py` | Splitting code and text into token-bounded chunks |
-| `embeddings.py` | Model loading and text/image embedding |
+| `embeddings.py` | Model loading, runtime selection and text/image embedding |
+| `mlx_runtime.py` | MLX model adapter used on Apple Silicon |
 | `settings.py` | Model options and their validation |
 | `index.py` | SQLite storage, full-text search and vector search |
 | `mcp_server.py` | Stdio MCP bridge and the instructions it gives assistants |

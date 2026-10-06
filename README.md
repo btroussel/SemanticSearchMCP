@@ -12,7 +12,7 @@ Install Local Search by following the Install section of https://github.com/btro
 
 1. Download `Local-Search-<version>.dmg` from the [latest release](https://github.com/btroussel/SemanticSearchMCP/releases/latest) and drag **Local Search** to Applications.
 2. Open it. The app is not notarized, so macOS blocks the first launch: choose **Open Anyway** in **System Settings → Privacy & Security**.
-3. Click **Install**. The app downloads Python with its libraries (about 1.4 GB) and the model (1.5 GB) once, or uses a model folder you already have.
+3. Click **Install**. The app downloads Python with its libraries (about 1.7 GB) and the model (1.5 GB) once, or uses a model folder you already have.
 4. Add the folders to index in the app. Nothing is indexed by default.
 5. Connect an assistant, then start a new session:
 

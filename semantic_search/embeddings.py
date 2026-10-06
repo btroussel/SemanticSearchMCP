@@ -1,13 +1,19 @@
-"""Offline text-only EmbeddingGemma runtime, lazily loaded and shared."""
+"""Offline EmbeddingGemma 2 runtime, lazily loaded and shared: MLX on Apple silicon, PyTorch elsewhere."""
 from __future__ import annotations
 
 import threading
 import gc
+import logging
 from pathlib import Path
 
 import numpy as np
 
 from .settings import DEFAULT_MAX_TOKENS, ModelSettings, QUERY_PROMPTS, validate_max_tokens
+
+log = logging.getLogger(__name__)
+DEVICES = ("auto", "mlx", "cuda", "mps", "cpu")
+# Allocation failures reported by PyTorch MPS and by MLX Metal.
+OUT_OF_MEMORY = ("out of memory", "insufficient memory", "unable to allocate", "attempting to allocate")
 
 
 class Embedder:
@@ -15,6 +21,8 @@ class Embedder:
                  max_tokens: int = DEFAULT_MAX_TOKENS, precision: str = "float32",
                  image_tokens: int = 280, query_task: str = "auto"):
         self.path = model_path.expanduser().resolve()
+        if device not in DEVICES:
+            raise ValueError(f"Device must be one of {', '.join(DEVICES)}")
         if not (self.path / "model.safetensors").is_file():
             raise ValueError(f"Local model checkpoint not found at {self.path}")
         options = ModelSettings(dimensions=dimensions, max_tokens=max_tokens, precision=precision,
@@ -53,15 +61,32 @@ class Embedder:
                 self.model = None
                 self.memory = {}
                 gc.collect()
-                if self.device == "mps":
-                    import torch
-                    torch.mps.empty_cache()
+                self._release_cache()
             for key, value in options.model_dump().items():
                 setattr(self, key, value)
             if self.model is not None:
                 self.model.max_seq_length = self.max_tokens
 
+    def _release_cache(self):
+        # Variable-length batches can retain a large Metal allocation pool.
+        if self.device == "mps":
+            import torch
+            torch.mps.empty_cache()
+        elif self.device == "mlx":
+            from . import mlx_runtime
+            mlx_runtime.clear_cache()
+
     def _load(self):
+        if self.model is None and self.device in ("auto", "mlx"):
+            from . import mlx_runtime
+            if self.device == "mlx" or mlx_runtime.available():
+                try:
+                    self.model = mlx_runtime.Model(self.path, self.precision, self.images, self.max_tokens)
+                    self.device = "mlx"
+                except Exception:
+                    if self.device == "mlx":
+                        raise
+                    log.warning("MLX could not load the model; using PyTorch instead", exc_info=True)
         if self.model is None:
             import torch
             from sentence_transformers import SentenceTransformer
@@ -104,7 +129,6 @@ class Embedder:
                 self.waiting_queries -= 1
         try:
             self._load()
-            import torch
 
             def run(batch_size):
                 options = {"processing_kwargs": {"image": {"max_soft_tokens": self.image_tokens}}} if self.images else {}
@@ -123,21 +147,24 @@ class Embedder:
             try:
                 result = run(4)
             except RuntimeError as exc:
-                if self.device != "mps" or "out of memory" not in str(exc).lower():
+                if self.device not in ("mps", "mlx") or not any(m in str(exc).lower() for m in OUT_OF_MEMORY):
                     raise
             if result is None:
                 # Exit the exception scope before retrying so failed-frame tensors can be released.
                 gc.collect()
-                torch.mps.empty_cache()
+                self._release_cache()
                 result = run(1)
         finally:
             try:
-                if self.device == "mps" and self.model is not None:
-                    import torch
-                    # Variable-length SDPA batches can retain a large Metal allocation pool.
-                    torch.mps.empty_cache()
-                    self.memory = {"allocated_mb": round(torch.mps.current_allocated_memory() / 1e6, 1),
-                                   "driver_mb": round(torch.mps.driver_allocated_memory() / 1e6, 1)}
+                if self.device in ("mps", "mlx") and self.model is not None:
+                    self._release_cache()
+                    if self.device == "mps":
+                        import torch
+                        self.memory = {"allocated_mb": round(torch.mps.current_allocated_memory() / 1e6, 1),
+                                       "driver_mb": round(torch.mps.driver_allocated_memory() / 1e6, 1)}
+                    else:
+                        from . import mlx_runtime
+                        self.memory = mlx_runtime.memory()
             finally:
                 with self.condition:
                     self.busy = False

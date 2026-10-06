@@ -17,10 +17,23 @@ dependencies = [
   "httpx>=0.28,<1",
   "pillow>=12,<13", "torchvision>=0.29,<0.30",
   "pypdf>=6,<7", "python-docx>=1.2,<2",
+  # Preferred runtime on Apple silicon; PyTorch remains the fallback and the runtime elsewhere.
+  "mlx>=0.32.3,<0.33; sys_platform == 'darwin' and platform_machine == 'arm64'",
+  "mlx-vlm>=0.7.7,<0.8; sys_platform == 'darwin' and platform_machine == 'arm64'",
 ]
 
 [project.optional-dependencies]
 dev = ["pytest>=8,<10"]
+
+[tool.uv]
+# Only mlx-vlm's EmbeddingGemma 2 model and image processor are used; skip its video, audio and
+# constrained-generation dependencies.
+exclude-dependencies = ["opencv-python", "mlx-audio", "miniaudio", "sounddevice", "llguidance"]
+
+[tool.uv.sources]
+# EmbeddingGemma 2 support (Blaizzy/mlx-vlm#2446) is merged but not yet released; switch to the
+# PyPI 0.7.7 release once published.
+mlx-vlm = { url = "https://github.com/Blaizzy/mlx-vlm/archive/fec3f50379bb2cb0760ef3c8a68ebce9585e4d97.tar.gz" }
 
 [project.scripts]
 code-search = "semantic_search.cli:main"

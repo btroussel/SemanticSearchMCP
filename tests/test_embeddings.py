@@ -131,3 +131,153 @@ def test_invalid_model_options_leave_runtime_unchanged(tmp_path, changes):
     with pytest.raises(ValueError):
         embedder.configure(**changes)
     assert embedder.configuration() == before
+
+
+def _fake_mlx(monkeypatch, available=True, fail=False):
+    from semantic_search import mlx_runtime
+    loads, cleanups = [], []
+
+    class Model:
+        def __init__(self, path, precision, images, max_seq_length):
+            if fail:
+                raise RuntimeError("MLX Metal device unavailable")
+            loads.append((precision, images, max_seq_length))
+            self.max_seq_length = max_seq_length
+            self.calls = []
+
+        def encode(self, texts, **kwargs):
+            self.calls.append(kwargs)
+            if len(self.calls) == 1 and kwargs["batch_size"] == 4 and texts == ["huge"]:
+                raise RuntimeError("[metal::malloc] Unable to allocate 8589934592 bytes")
+            return np.ones((len(texts), kwargs["truncate_dim"]), dtype=np.float32)
+
+    monkeypatch.setattr(mlx_runtime, "available", lambda: available)
+    monkeypatch.setattr(mlx_runtime, "Model", Model)
+    monkeypatch.setattr(mlx_runtime, "clear_cache", lambda: cleanups.append(True))
+    monkeypatch.setattr(mlx_runtime, "memory", lambda: {"allocated_mb": 1.0, "driver_mb": 1.0})
+    return loads, cleanups
+
+
+def test_auto_prefers_mlx_and_keeps_options_and_query_gate(tmp_path, monkeypatch):
+    (tmp_path / "model.safetensors").write_bytes(b"fixture")
+    loads, cleanups = _fake_mlx(monkeypatch)
+    embedder = Embedder(tmp_path, precision="bfloat16", images=True, max_tokens=2048)
+    assert embedder.encode(["doc"]).shape == (1, 768)
+    assert embedder.device == "mlx" and loads == [("bfloat16", True, 2048)]
+    assert embedder.memory == {"allocated_mb": 1.0, "driver_mb": 1.0} and cleanups
+    embedder.set_max_tokens(1024)
+    assert embedder.model.max_seq_length == 1024
+    assert embedder.encode(["claim"], query=True).shape == (1, 768)
+    assert embedder.model.calls[-1]["prompt_name"] == "CodeRetrieval"
+    embedder.configure(precision="float32", dimensions=256)
+    assert embedder.encode(["doc"]).shape == (1, 256)
+    assert embedder.device == "mlx" and loads[-1] == ("float32", True, 1024)
+    assert not embedder.busy
+
+
+def test_auto_falls_back_to_pytorch_when_mlx_cannot_load(tmp_path, monkeypatch):
+    import sentence_transformers
+    (tmp_path / "model.safetensors").write_bytes(b"fixture")
+    _fake_mlx(monkeypatch, fail=True)
+
+    class Model:
+        def __init__(self, *args, device=None, **kwargs):
+            self.device = device
+
+        def encode(self, texts, **kwargs):
+            return np.ones((len(texts), 768), dtype=np.float32)
+
+    monkeypatch.setattr(sentence_transformers, "SentenceTransformer", Model)
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    monkeypatch.setattr(torch.backends.mps, "is_available", lambda: False)
+    embedder = Embedder(tmp_path)
+    assert embedder.encode(["doc"]).shape == (1, 768)
+    assert embedder.device == "cpu" and embedder.model.device == "cpu"
+    explicit = Embedder(tmp_path, device="mlx")
+    with pytest.raises(RuntimeError, match="Metal"):
+        explicit.encode(["doc"])
+    assert not explicit.busy and explicit.device == "mlx"
+
+
+def test_auto_skips_mlx_when_unavailable(tmp_path, monkeypatch):
+    import sentence_transformers
+    (tmp_path / "model.safetensors").write_bytes(b"fixture")
+    loads, _ = _fake_mlx(monkeypatch, available=False)
+    monkeypatch.setattr(sentence_transformers, "SentenceTransformer", lambda *a, **k: type("Model", (), {})())
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    monkeypatch.setattr(torch.backends.mps, "is_available", lambda: False)
+    embedder = Embedder(tmp_path)
+    embedder._load()
+    assert embedder.device == "cpu" and loads == []
+
+
+def test_mlx_memory_retry_releases_cache(tmp_path, monkeypatch):
+    (tmp_path / "model.safetensors").write_bytes(b"fixture")
+    _, cleanups = _fake_mlx(monkeypatch)
+    embedder = Embedder(tmp_path, device="mlx")
+    assert embedder.encode(["huge"]).shape == (1, 768)
+    assert [call["batch_size"] for call in embedder.model.calls] == [4, 1]
+    assert len(cleanups) == 2 and not embedder.busy
+
+
+def test_mlx_requires_apple_silicon(monkeypatch):
+    import platform
+    import sys
+    from semantic_search import mlx_runtime
+    monkeypatch.setattr(sys, "platform", "linux")
+    assert not mlx_runtime.available()
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(platform, "machine", lambda: "x86_64")
+    assert not mlx_runtime.available()
+
+
+def test_unknown_device_is_rejected(tmp_path):
+    (tmp_path / "model.safetensors").write_bytes(b"fixture")
+    with pytest.raises(ValueError, match="Device"):
+        Embedder(tmp_path, device="metal")
+
+
+def test_mlx_adapter_matches_sentence_transformers_options():
+    pytest.importorskip("mlx.core")
+    from PIL import Image
+    from semantic_search.mlx_runtime import Model
+    tokenized, templated, runs = [], [], []
+
+    class Processor:
+        def tokenizer(self, texts, **kwargs):
+            tokenized.append((texts, kwargs))
+            return {"input_ids": np.ones((len(texts), 3), dtype=np.int64),
+                    "attention_mask": np.ones((len(texts), 3), dtype=np.int64)}
+
+        def apply_chat_template(self, conversations, **kwargs):
+            import mlx.core as mx
+            templated.append((conversations, kwargs))
+            return {"input_ids": mx.ones((1, 3), dtype=mx.int32), "pixel_values": mx.ones((1, 2))}
+
+    import mlx.core as mx
+    model = Model.__new__(Model)
+    model.processor, model.images, model.max_seq_length, model.dtype = Processor(), True, 512, mx.bfloat16
+    model.prompts = {"CodeRetrieval": "task: code retrieval | query: "}
+
+    def run(**inputs):
+        runs.append(inputs)
+        batch = inputs["input_ids"].shape[0]
+        return np.tile(np.arange(1, 769, dtype=np.float32), (batch, 1))
+
+    model._run = run
+    vectors = model.encode(["a", "b"], prompt_name="CodeRetrieval", truncate_dim=256, batch_size=4)
+    assert tokenized[-1][0] == ["task: code retrieval | query: a", "task: code retrieval | query: b"]
+    assert tokenized[-1][1]["max_length"] == 512 and tokenized[-1][1]["truncation"]
+    assert vectors.shape == (2, 256) and np.allclose(np.linalg.norm(vectors, axis=1), 1)
+    image = Image.new("RGB", (8, 8))
+    vectors = model.encode(["doc", image], prompt="", truncate_dim=768,
+                           processing_kwargs={"image": {"max_soft_tokens": 70}, "text": {"truncation": False}})
+    assert vectors.shape == (2, 768) and tokenized[-1][0] == ["doc"]
+    assert templated[-1][0] == [[{"role": "user", "content": [{"type": "image", "image": image}]}]]
+    assert templated[-1][1]["max_soft_tokens"] == 70
+    assert runs[-1]["pixel_values"].dtype == mx.bfloat16
+    with pytest.raises(ValueError, match="without a prompt"):
+        model.encode([image], prompt_name="CodeRetrieval")
+    model.images = False
+    with pytest.raises(ValueError, match="disabled"):
+        model.encode([image], prompt="")
