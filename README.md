@@ -4,10 +4,11 @@ A native macOS app and local MCP service for searching user-authorized code, doc
 
 ## Start
 
-Python 3.12+ and macOS 14+ are required. The local checkpoint belongs at `models/embeddinggemma-2/`.
+Python 3.12+, [uv](https://docs.astral.sh/uv/) and macOS 14+ are required. The first command installs dependencies; the second downloads the [EmbeddingGemma 2 checkpoint](https://huggingface.co/google/embeddinggemma-2) (Apache-2.0) to `models/embeddinggemma-2/`, after which the model runs offline.
 
 ```sh
 uv sync --extra dev
+.venv/bin/hf download google/embeddinggemma-2 --local-dir models/embeddinggemma-2
 .venv/bin/python scripts/build-mac-app.py
 open '.code-search/Local Search.app'
 ```

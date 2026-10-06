@@ -24,9 +24,7 @@ One file per app, service, or project-wide concern. Commands below assume the re
 ## Measured artifacts
 
 - [workspace-smoke.json](workspace-smoke.json): disposable real-model checks for text/images, settings, MCP and revocation.
-- [benchmark.json](benchmark.json): rankings and timings for the 12-question TABNext retrieval benchmark.
-- [Benchmark cases](../examples/tabnext-queries.json): hand-authored queries and expected symbols.
 
-The JSON files are generated evidence, not configuration or promises of general performance. Keep their paths aligned with the scripts that produce them; do not replace measurements with invented values.
+The JSON file is generated evidence, not configuration or promises of general performance. Keep its path aligned with the script that produces it; do not replace measurements with invented values.
 
 The root [README](../README.md) is the quick start and [AGENTS.md](../AGENTS.md) is the automatically discovered agent guidance. Project documentation lives here; upstream model files under `models/` remain part of the local checkpoint.

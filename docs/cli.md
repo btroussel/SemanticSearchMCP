@@ -31,7 +31,7 @@ In another terminal:
 
 ```sh
 .venv/bin/code-search status
-.venv/bin/code-search search "Where do we associate high and low confidence detections?"
+.venv/bin/code-search search "Where is the retry delay for failed uploads computed?"
 ```
 
 Indexing never imports or executes the indexed repository's code and never edits its source. Keeping the database under this project's ignored `.code-search/` directory keeps index data out of the indexed repository.
@@ -55,4 +55,4 @@ The original service binds locally but does not use the general-service source/g
 .venv/bin/code-search search --help
 ```
 
-The retrieval benchmark has repository-specific cases; see [validation](validation.md) before running it.
+The retrieval benchmark needs cases written for your repository; see [validation](validation.md) before running it.

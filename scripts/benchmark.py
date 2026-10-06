@@ -1,4 +1,7 @@
-"""Evaluate a small hand-authored retrieval set, without running repository code."""
+"""Evaluate a small hand-authored retrieval set, without running repository code.
+
+The cases file is a JSON list of {"query", "path", "symbol"} objects for the indexed repository.
+"""
 import argparse
 import json
 import statistics
@@ -9,8 +12,8 @@ import httpx
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--url", default="http://127.0.0.1:8765")
-parser.add_argument("--cases", type=Path, default=Path("examples/tabnext-queries.json"))
-parser.add_argument("--output", type=Path, default=Path("docs/benchmark.json"))
+parser.add_argument("--cases", type=Path, required=True)
+parser.add_argument("--output", type=Path, default=Path(".code-search/benchmark.json"))
 parser.add_argument("--wait", action="store_true", help="Wait up to ten minutes for the first full index")
 args = parser.parse_args()
 cases = json.loads(args.cases.read_text())
@@ -44,7 +47,7 @@ with httpx.Client(base_url=args.url, timeout=120, trust_env=False) as client:
                          "cases": len(subset), "median_elapsed_ms": round(statistics.median(r["elapsed_ms"] for r in subset), 2),
                          "max_elapsed_ms": max(r["elapsed_ms"] for r in subset)}
     report = {"measured_at": time.time(), "status": status, "summary": summary,
-              "limitations": ["12 hand-authored questions; not a general code-search benchmark or an agent speedup measurement.",
+              "limitations": [f"{len(cases)} hand-authored questions; not a general code-search benchmark or an agent speedup measurement.",
                               "Lexical mode is SQLite FTS5 BM25, not ripgrep or an agent generating search patterns.",
                               "Semantic runs first and includes question embedding; hybrid reuses the query embedding cache.",
                               "Symbol hits require the exact expected symbol; related class/file hits count only as file hits."],

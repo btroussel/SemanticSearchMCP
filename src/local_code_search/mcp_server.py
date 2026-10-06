@@ -67,7 +67,7 @@ def create_server(url: str, token_file: Path | None = None, general: bool = Fals
     def search_code(query: str, limit: int = 8, path_filter: str = "", mode: str = "auto", max_chars: int = 16000, source_id: str = "") -> dict[str, Any]:
         """Find implementations by behavior or identifiers. Returns ranked source, paths, lines, and parent IDs.
 
-        path_filter is a relative path prefix, e.g. tabnext/models/. mode is auto, hybrid, semantic, or lexical.
+        path_filter is a relative path prefix, e.g. src/models/. mode is auto, hybrid, semantic, or lexical.
         auto uses semantic search for behavior questions and lexical search for exact identifier/path queries.
         Results are candidates, not an exhaustive reference list. max_chars bounds returned code.
         """

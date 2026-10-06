@@ -23,23 +23,27 @@ These are functional checks on small fixtures, not representative retrieval-qual
 ## Original MCP smoke
 
 ```sh
-.venv/bin/python scripts/check-mcp.py
+.venv/bin/python scripts/check-mcp.py --symbol my_function
 ```
 
-This script targets the original service on port 8765 and asserts a TABNext repository, five tools, lexical code search, parent/source reads and traversal rejection. Run it only against that intended service. General-service MCP is exercised by the disposable workspace smoke instead.
+This script targets the original service on port 8765. Pass a function or class defined in the indexed repository. It asserts five tools, lexical code search, parent/source reads and traversal rejection. Run it only against that intended service. General-service MCP is exercised by the disposable workspace smoke instead.
 
-## TABNext retrieval benchmark
+## Retrieval benchmark
 
 ```sh
 # Once index_status reports ready:
-.venv/bin/python scripts/benchmark.py
+.venv/bin/python scripts/benchmark.py --cases my-queries.json
 ```
 
-Tests exercise only this service and temporary fixture repositories. They check incremental cache reuse, stale/deleted files, hierarchy, source boundaries, exclusions, and HTTP validation. They do not run TABNext tests or training.
+The cases file is a JSON list of hand-authored questions about the indexed repository, each with the expected file and symbol:
 
-The benchmark uses 12 hand-authored TABNext questions in [examples/tabnext-queries.json](../examples/tabnext-queries.json). It saves exact rankings and timings to `docs/benchmark.json`. It compares semantic retrieval, FTS5 lexical retrieval, and hybrid retrieval; FTS5 is not an agent using ripgrep. Semantic runs first and includes query encoding; hybrid reuses the query embedding. This measures retrieval, not end-to-end Codex or Claude Code performance.
+```json
+[{"query": "Where is the retry delay for failed uploads computed?", "path": "src/uploads.py", "symbol": "backoff_delay"}]
+```
 
-On this initial sample, semantic search found 12/12 expected symbols in the top five, lexical search found 8/12, and equal-weight hybrid search found 9/12. That result motivated semantic retrieval for natural-language questions in auto mode. The sample is small and hand-authored; evaluate new questions before generalizing. Exact rankings and measured timings are in the benchmark JSON.
+The benchmark never runs the indexed repository's code. It saves exact rankings and timings to `.code-search/benchmark.json` by default. It compares semantic retrieval, FTS5 lexical retrieval, and hybrid retrieval; FTS5 is not an agent using ripgrep. Semantic runs first and includes query encoding; hybrid reuses the query embedding. This measures retrieval, not end-to-end Codex or Claude Code performance.
+
+On an initial, unpublished 12-question sample from one Python repository, semantic search found 12/12 expected symbols in the top five, lexical search found 8/12, and equal-weight hybrid search found 9/12. That result motivated semantic retrieval for natural-language questions in auto mode. The sample is small and hand-authored; evaluate your own questions before generalizing.
 
 ## Full assistant evaluations
 

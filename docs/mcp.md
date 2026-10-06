@@ -115,7 +115,7 @@ claude mcp remove --scope local repo-code-search
 ```sh
 curl -s http://127.0.0.1:8765/search \
   -H 'Content-Type: application/json' \
-  -d '{"query":"where is the learning rate warmup configured?","limit":5,"path_filter":"tabnext/"}'
+  -d '{"query":"where is the learning rate warmup configured?","limit":5,"path_filter":"src/"}'
 ```
 
 The interactive API documentation is at `http://127.0.0.1:8765/docs` while running. The service binds only to loopback. Indexing and retrieval stay local; a connected cloud coding model can still receive the snippets returned by these tools.

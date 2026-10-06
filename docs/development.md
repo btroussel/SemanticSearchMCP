@@ -6,6 +6,7 @@ Python requires **3.12 or newer**; the Swift app targets **macOS 14 or newer**. 
 
 ```sh
 uv sync --extra dev
+.venv/bin/hf download google/embeddinggemma-2 --local-dir models/embeddinggemma-2
 .venv/bin/code-search --help
 ```
 
