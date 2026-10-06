@@ -25,16 +25,16 @@ async def check_mcp(url, state, source, project):
         async with ClientSession(reader, writer) as session:
             await session.initialize()
             tools = await session.list_tools()
-            assert len(tools.tools) == 7
+            assert len(tools.tools) == 6
             listed = await session.call_tool("list_sources", {})
             assert listed.structuredContent["sources"][0]["id"] == source
-            found = await session.call_tool("search_code", {"query": "authenticate_user", "source_id": source, "mode": "lexical"})
+            found = await session.call_tool("search_local", {"query": "authenticate_user", "source_id": source, "mode": "lexical", "asset_kind": "code"})
             assert found.structuredContent["results"][0]["symbol"] == "authenticate_user"
             picture = await session.call_tool("read_image", {"source_id": source, "path": "asset-a.png"})
             assert not picture.isError and any(c.type == "image" for c in picture.content)
             outside = await session.call_tool("read_code_file", {"source_id": source, "path": "../outside.txt"})
             assert outside.isError
-    return ["7 tools","structured search", "image pixels", "path boundary"]
+    return ["6 tools", "structured search", "image pixels", "path boundary"]
 
 
 def main():

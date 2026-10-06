@@ -1,5 +1,5 @@
 {
-  "device": "mps",
+  "device": "mlx",
   "files": 5,
   "max_tokens": 4096,
   "precision": "float32",
@@ -9,25 +9,25 @@
     {
       "query": "Un cercle rouge sur un fond blanc",
       "top_path": "asset-a.png",
-      "elapsed_ms": 59.83,
+      "elapsed_ms": 29.28,
       "cosine": 0.7461
     },
     {
       "query": "Un graphique à barres bleues",
       "top_path": "asset-b.png",
-      "elapsed_ms": 69.96,
+      "elapsed_ms": 20.19,
       "cosine": 0.7405
     },
     {
       "query": "Where is the password checked before granting access?",
       "top_path": "auth.py",
-      "elapsed_ms": 62.91,
-      "cosine": 0.7584
+      "elapsed_ms": 19.84,
+      "cosine": 0.7918
     },
     {
       "query": "When is the consulting invoice due?",
       "top_path": "invoice.docx",
-      "elapsed_ms": 60.86,
+      "elapsed_ms": 23.62,
       "cosine": 0.7811
     }
   ],
@@ -42,26 +42,26 @@
         {
           "query": "Un cercle rouge sur un fond blanc",
           "top_path": "asset-a.png",
-          "elapsed_ms": 65.4,
-          "cosine": 0.7952
+          "elapsed_ms": 35.37,
+          "cosine": 0.7906
         },
         {
           "query": "Un graphique à barres bleues",
           "top_path": "asset-b.png",
-          "elapsed_ms": 53.42,
-          "cosine": 0.7797
+          "elapsed_ms": 19.16,
+          "cosine": 0.7814
         },
         {
           "query": "Where is the password checked before granting access?",
           "top_path": "auth.py",
-          "elapsed_ms": 53.96,
-          "cosine": 0.7866
+          "elapsed_ms": 16.72,
+          "cosine": 0.8175
         },
         {
           "query": "When is the consulting invoice due?",
           "top_path": "invoice.docx",
-          "elapsed_ms": 54.71,
-          "cosine": 0.7983
+          "elapsed_ms": 20.72,
+          "cosine": 0.7973
         }
       ]
     },
@@ -74,26 +74,26 @@
         {
           "query": "Un cercle rouge sur un fond blanc",
           "top_path": "asset-a.png",
-          "elapsed_ms": 73.25,
-          "cosine": 0.7563
+          "elapsed_ms": 34.76,
+          "cosine": 0.7579
         },
         {
           "query": "Un graphique à barres bleues",
           "top_path": "asset-b.png",
-          "elapsed_ms": 57.76,
+          "elapsed_ms": 21.92,
           "cosine": 0.7509
         },
         {
           "query": "Where is the password checked before granting access?",
           "top_path": "auth.py",
-          "elapsed_ms": 53.19,
-          "cosine": 0.7668
+          "elapsed_ms": 19.2,
+          "cosine": 0.799
         },
         {
           "query": "When is the consulting invoice due?",
           "top_path": "invoice.docx",
-          "elapsed_ms": 56.8,
-          "cosine": 0.788
+          "elapsed_ms": 21.67,
+          "cosine": 0.7855
         }
       ]
     },
@@ -106,26 +106,26 @@
         {
           "query": "Un cercle rouge sur un fond blanc",
           "top_path": "asset-a.png",
-          "elapsed_ms": 65.73,
-          "cosine": 0.8685
+          "elapsed_ms": 21.98,
+          "cosine": 0.8691
         },
         {
           "query": "Un graphique à barres bleues",
           "top_path": "asset-b.png",
-          "elapsed_ms": 53.91,
-          "cosine": 0.8447
+          "elapsed_ms": 18.78,
+          "cosine": 0.8446
         },
         {
           "query": "Where is the password checked before granting access?",
           "top_path": "auth.py",
-          "elapsed_ms": 52.98,
-          "cosine": 0.8478
+          "elapsed_ms": 17.58,
+          "cosine": 0.8763
         },
         {
           "query": "When is the consulting invoice due?",
           "top_path": "invoice.docx",
-          "elapsed_ms": 57.13,
-          "cosine": 0.8469
+          "elapsed_ms": 22.38,
+          "cosine": 0.8478
         }
       ]
     },
@@ -138,26 +138,26 @@
         {
           "query": "Un cercle rouge sur un fond blanc",
           "top_path": "asset-a.png",
-          "elapsed_ms": 69.29,
-          "cosine": 0.7459
+          "elapsed_ms": 34.57,
+          "cosine": 0.7435
         },
         {
           "query": "Un graphique à barres bleues",
           "top_path": "asset-b.png",
-          "elapsed_ms": 54.03,
-          "cosine": 0.7239
+          "elapsed_ms": 24.69,
+          "cosine": 0.7251
         },
         {
           "query": "Where is the password checked before granting access?",
           "top_path": "auth.py",
-          "elapsed_ms": 52.47,
-          "cosine": 0.7585
+          "elapsed_ms": 18.46,
+          "cosine": 0.7929
         },
         {
           "query": "When is the consulting invoice due?",
           "top_path": "invoice.docx",
-          "elapsed_ms": 56.07,
-          "cosine": 0.7802
+          "elapsed_ms": 22.4,
+          "cosine": 0.7815
         }
       ]
     }
@@ -169,7 +169,7 @@
     "fact_checking"
   ],
   "mcp": [
-    "7 tools",
+    "6 tools",
     "structured search",
     "image pixels",
     "path boundary"

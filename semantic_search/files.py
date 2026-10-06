@@ -26,6 +26,14 @@ def digest(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()
 
 
+def docx_paragraph(paragraph) -> str:
+    """Render Word title/heading styles as Markdown headings so documents split by section."""
+    style = getattr(paragraph.style, "name", "") or ""
+    level = 1 if style == "Title" else int(style[8:]) if style.startswith("Heading ") and style[8:].isdigit() else 0
+    text = paragraph.text
+    return f"{'#' * min(level, 6)} {text}" if level and text.strip() and "\n" not in text else text
+
+
 class Repository:
     def __init__(self, root: Path, kinds: list[str] | None = None):
         self.root = root.expanduser().resolve()
@@ -124,7 +132,7 @@ class Repository:
                     raise ValueError("Expanded document exceeds size limit")
             from docx import Document
             document = Document(path)
-            text = "\n".join([p.text for p in document.paragraphs] +
+            text = "\n".join([docx_paragraph(p) for p in document.paragraphs] +
                              [" | ".join(c.text for c in row.cells) for table in document.tables for row in table.rows])
         else:
             text = path.read_text(encoding="utf-8")

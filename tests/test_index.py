@@ -20,9 +20,12 @@ class FakeEmbedder:
 
     def __init__(self):
         self.calls = 0
+        self.tasks = []
 
-    def encode(self, texts, query=False):
+    def encode(self, texts, query=False, task="code"):
         self.calls += len(texts)
+        if query:
+            self.tasks.append(task)
         vectors = np.array([list(hashlib.md5(t.encode()).digest()) for t in texts], dtype=np.float32)
         return vectors / np.linalg.norm(vectors, axis=1, keepdims=True)
 
@@ -244,3 +247,68 @@ def test_duplicate_listing_is_bounded(repo, tmp_path):
     results = index.search("budget", mode="lexical")["results"]
     assert len(results) == 1
     assert len(results[0]["duplicates"]) == 10 and results[0]["duplicates_omitted"] == 4
+
+
+def test_markdown_splits_by_heading_without_losing_text():
+    intro = "\n".join(f"Background sentence {i} about the tracker design." for i in range(150))
+    text = ("Preamble before any heading.\n\n# Guide\nOverview text.\n```sh\n# not a heading\n```\n"
+            f"## Install\nRun the installer.\n## Design ##\n{intro}\n### Matching\nUNIQUE_MATCHING_NOTE\n# Appendix\nLast words.\n")
+    chunks = split_file("guide.md", text)
+    by_symbol = {c.symbol: c for c in chunks if c.kind == "section"}
+    assert set(by_symbol) == {"Guide", "Guide > Install", "Guide > Design", "Guide > Design > Matching", "Appendix"}
+    assert by_symbol["Guide > Install"].parent_id == by_symbol["Guide"].id
+    assert by_symbol["Guide > Design > Matching"].parent_id == by_symbol["Guide > Design"].id
+    assert by_symbol["Appendix"].parent_id == next(c.id for c in chunks if c.kind == "file")
+    assert by_symbol["Guide > Install"].text == "## Install\nRun the installer."
+    # The oversized section windows only its own text; its subsection keeps a separate chunk.
+    design_blocks = [c for c in chunks if c.kind == "block" and c.symbol == "Guide > Design"]
+    assert design_blocks and all(c.parent_id == by_symbol["Guide > Design"].id for c in design_blocks)
+    assert not any("UNIQUE_MATCHING_NOTE" in c.text for c in design_blocks)
+    assert "UNIQUE_MATCHING_NOTE" in by_symbol["Guide > Design > Matching"].text
+    for line in text.splitlines():
+        if line.strip():
+            assert any(line in c.text for c in chunks if c.kind != "file"), line
+
+
+def test_pdf_text_splits_by_page():
+    chunks = split_file("paper.pdf", "[Page 1]\nAbstract\n\n[Page 2]\nResults table")
+    pages = [(c.symbol, c.kind, c.start, c.end, c.text) for c in chunks if c.kind == "page"]
+    assert pages == [("Page 1", "page", 1, 3, "[Page 1]\nAbstract\n"), ("Page 2", "page", 4, 5, "[Page 2]\nResults table")]
+
+
+def test_query_prompt_follows_searched_asset_kind(repo, tmp_path):
+    (repo / "notes.md").write_text("# Notes\nTracks are matched by overlap.\n")
+    embedder = FakeEmbedder()
+    mixed = Index(repo, tmp_path / "mixed.sqlite", embedder, kinds=["code", "documents"])
+    mixed.sync()
+    mixed.search("how are tracks matched", mode="semantic")
+    mixed.search("how are tracks matched", mode="semantic", asset_kind="code")
+    mixed.search("how are tracks matched", mode="semantic", asset_kind="code")
+    assert embedder.tasks == ["search", "code"]
+    code_only = Index(repo, tmp_path / "code.sqlite", embedder, kinds=["code"])
+    code_only.sync()
+    code_only.search("how are tracks matched", mode="semantic")
+    assert embedder.tasks[-1] == "code"
+
+
+def test_chunker_upgrade_rechunks_without_embedding_unchanged_text(repo, tmp_path):
+    path = tmp_path / "index.sqlite"
+    index = Index(repo, path, FakeEmbedder())
+    index.sync()
+    index.db.execute("UPDATE meta SET value='4' WHERE key='chunk_version'")
+    index.db.commit()
+    index.db.close()
+    upgraded = Index(repo, path, FakeEmbedder())
+    assert upgraded.status()["files"] == 0
+    stats = upgraded.sync()
+    assert stats["changed_files"] == 1 and stats["embedded_chunks"] == 0 and stats["cached_chunks"] > 0
+
+
+def test_underlined_markdown_and_rst_titles_become_sections():
+    markdown = "---\ntitle: front matter\n---\nIntro\n\nGuide\n=====\nText\n\nInstall\n-------\n- item\n---\nmore\n"
+    sections = [(c.symbol, c.start, c.end) for c in split_file("a.md", markdown) if c.kind == "section"]
+    # Front matter and a rule after a list item are not headings.
+    assert sections == [("Guide", 6, 14), ("Guide > Install", 10, 14)]
+    rst = "=====\nTitle\n=====\n\nIntro\n\nUsage\n-----\nRun it.\n\nDetails\n~~~~~~~\nMore.\n\nAPI\n---\nCalls.\n"
+    sections = [(c.symbol, c.start, c.end) for c in split_file("a.rst", rst) if c.kind == "section"]
+    assert sections == [("Title", 1, 17), ("Title > Usage", 7, 14), ("Title > Usage > Details", 11, 14), ("Title > API", 15, 17)]

@@ -131,7 +131,8 @@ def test_pdf_docx_extracted_text_is_searchable_and_labeled(tmp_path):
     from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
     workspace = make_workspace(tmp_path)
     root = tmp_path / "documents"; root.mkdir()
-    doc = Document(); doc.add_paragraph("Quarterly finance forecast"); doc.save(root / "report.docx")
+    doc = Document(); doc.add_heading("Outlook", 1); doc.add_paragraph("Quarterly finance forecast")
+    doc.save(root / "report.docx")
     writer = PdfWriter(); page = writer.add_blank_page(width=200, height=200)
     font = DictionaryObject({NameObject("/Type"): NameObject("/Font"), NameObject("/Subtype"): NameObject("/Type1"), NameObject("/BaseFont"): NameObject("/Helvetica")})
     page[NameObject("/Resources")] = DictionaryObject({NameObject("/Font"): DictionaryObject({NameObject("/F1"): writer._add_object(font)})})
@@ -143,6 +144,10 @@ def test_pdf_docx_extracted_text_is_searchable_and_labeled(tmp_path):
     results = index.search("finance", mode="lexical")["results"]
     assert {r["path"] for r in results} == {"report.docx", "annual.pdf"}
     assert all(r["line_origin"] == "extracted_text" for r in results)
+    # Word headings and PDF pages become sections that results and parent_id expansion use.
+    assert index.read_file("report.docx")["code"].startswith("# Outlook\nQuarterly")
+    sections = {(r[0], r[1], r[2]) for r in index.db.execute("SELECT path, symbol, kind FROM chunks")}
+    assert {("report.docx", "Outlook", "section"), ("annual.pdf", "Page 1", "page")} <= sections
 
 
 def test_general_mcp_has_image_and_source_tools_but_no_folder_authorization(tmp_path):
@@ -150,7 +155,9 @@ def test_general_mcp_has_image_and_source_tools_but_no_folder_authorization(tmp_
     server = create_server("http://127.0.0.1:8766", workspace.state / "access.key", general=True)
     import asyncio
     names = {t.name for t in asyncio.run(server.list_tools())}
-    assert {"list_sources", "search_local", "search_code", "read_image", "read_symbol"} <= names
+    assert {"list_sources", "search_local", "read_image", "read_symbol"} <= names
+    # search_local's asset_kind covers code, so agents do not choose between two near-identical tools.
+    assert "search_code" not in names
     assert "add_source" not in names and "remove_source" not in names
     # list_sources reports readiness, so general mode has no separate index_status tool.
     assert "index_status" not in names
@@ -162,8 +169,8 @@ def test_mcp_schemas_expose_service_bounds_and_hide_source_id_in_single_reposito
         create_server("http://127.0.0.1:8766", general=True, project=Path.cwd()).list_tools())}
     assert general["search_local"]["mode"]["enum"] == ["auto", "hybrid", "semantic", "lexical"]
     assert general["search_local"]["asset_kind"]["enum"] == ["", "code", "documents", "images"]
-    assert general["search_code"]["response_format"]["enum"] == ["concise", "detailed"]
-    assert (general["search_code"]["limit"]["minimum"], general["search_code"]["limit"]["maximum"]) == (1, 30)
+    assert general["search_local"]["response_format"]["enum"] == ["concise", "detailed"]
+    assert (general["search_local"]["limit"]["minimum"], general["search_local"]["limit"]["maximum"]) == (1, 30)
     assert general["read_code_file"]["max_lines"]["maximum"] == 300
     single = {t.name: t.inputSchema["properties"] for t in asyncio.run(create_server("http://127.0.0.1:8765").list_tools())}
     assert set(single) == {"search_code", "read_symbol", "read_code_file", "index_status", "refresh_index"}
@@ -422,3 +429,28 @@ def test_identical_files_across_sources_share_one_result(tmp_path):
     report = next(r for r in results if r["path"] != "agenda.txt")
     locations = {(report["source_id"], report["path"])} | {(d["source_id"], d["path"]) for d in report["duplicates"]}
     assert locations == {(first["id"], "report.txt"), (first["id"], "report copy.txt"), (second["id"], "report.txt")}
+
+
+def test_merged_search_uses_one_query_prompt_across_sources(tmp_path):
+    class Recording(MultimodalFixture):
+        tasks = []
+
+        def encode(self, inputs, query=False, task="code"):
+            if query:
+                self.tasks.append(task)
+            return super().encode(inputs, query=query, task=task)
+
+    embedder = Recording()
+    workspace = Workspace(tmp_path / "state", embedder, watch=False)
+    code, docs = tmp_path / "code", tmp_path / "docs"
+    code.mkdir(); docs.mkdir()
+    (code / "auth.py").write_text("def check():\n    return True\n")
+    (docs / "notes.md").write_text("# Notes\nAccess is checked at login.\n")
+    (docs / "login.py").write_text("def login():\n    return check()\n")
+    for folder, kinds in ((code, ["code"]), (docs, ["code", "documents"])):
+        workspace.index(workspace.add(SourceRequest(path=str(folder), kinds=kinds))["id"]).sync()
+    # Scores from a code-only and a mixed source are compared, so both must embed the query alike.
+    workspace.search(WorkspaceSearch(query="where is access checked", mode="semantic"))
+    assert embedder.tasks == ["search", "search"]
+    workspace.search(WorkspaceSearch(query="where is access checked", mode="semantic", asset_kind="code"))
+    assert embedder.tasks[2:] == ["code", "code"]

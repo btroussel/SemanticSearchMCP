@@ -33,7 +33,8 @@ class Index:
     def __init__(self, repo: Path, database: Path, embedder, excludes: list[str] | None = None, kinds: list[str] | None = None,
                  rebuild_on_model_change: bool = False):
         self.repo = Repository(repo, kinds)
-        self.query_task = "code" if kinds is None or kinds == ["code"] else "search"
+        # Code-only sources always use the code retrieval prompt; mixed sources choose per search.
+        self.code_only = kinds is None or kinds == ["code"]
         self.embedder = embedder
         self.excludes = excludes or []
         self.exclude_spec = pathspec.PathSpec.from_lines("gitignore", self.excludes)
@@ -70,20 +71,21 @@ class Index:
         differences = {k for k, v in expected.items() if previous.get(k) != v}
         if previous and differences:
             rebuildable = {"max_tokens", "chunk_version"} | ({"model"} if rebuild_on_model_change else set())
-            if differences <= rebuildable and previous.get("chunk_version") in {"3", CHUNK_VERSION}:
-                # Token-budget changes invalidate both chunks and cached vectors.
+            if differences <= rebuildable and previous.get("chunk_version") in {"3", "4", CHUNK_VERSION}:
+                # Token-budget changes invalidate both chunks and cached vectors; a chunker
+                # upgrade alone keeps vectors, so unchanged chunks are not embedded again.
                 # Upgrade existing app indexes without losing folder authorization.
-                self.reset_token_limit()
+                self.reset_token_limit(keep_vectors=differences == {"chunk_version"})
             else:
                 self.db.close()
                 raise ValueError("Index configuration changed. Use a new --db path or remove the old index to rebuild.")
         self.db.executemany("INSERT OR REPLACE INTO meta VALUES (?, ?)", expected.items())
         self.db.commit()
 
-    def reset_token_limit(self):
+    def reset_token_limit(self, keep_vectors: bool = False):
         """Caller holds index_lock when changing a running index's model settings."""
         with self.lock, self.db:
-            for table in ("chunks_fts", "chunks", "files", "embedding_cache"):
+            for table in ("chunks_fts", "chunks", "files") + (() if keep_vectors else ("embedding_cache",)):
                 self.db.execute(f"DELETE FROM {table}")
             self.db.executemany("INSERT OR REPLACE INTO meta VALUES (?, ?)", [
                 ("max_tokens", str(getattr(self.embedder, "max_tokens", DEFAULT_MAX_TOKENS))),
@@ -218,7 +220,8 @@ class Index:
                 self.matrix_revision = self.revision
             return self.rows, self.matrix, self.keys, self.copies
 
-    def search(self, query: str, limit: int = 10, path_filter: str = "", mode: str = "auto", max_chars: int = 18000, asset_kind: str = "", allowed_prefixes: list[str] | None = None):
+    def search(self, query: str, limit: int = 10, path_filter: str = "", mode: str = "auto", max_chars: int = 18000, asset_kind: str = "", allowed_prefixes: list[str] | None = None,
+               task: str | None = None):
         if not query.strip() or len(query) > 2000:
             raise ValueError("Query must contain 1–2000 characters")
         if mode not in {"auto", "hybrid", "semantic", "lexical"}:
@@ -228,6 +231,7 @@ class Index:
             identifier = bool(re.fullmatch(r"[A-Za-z_][\w./:]*", query)) and (
                 any(c in query for c in "_./:") or any(c.isupper() for c in query))
             mode = "lexical" if identifier else "semantic"
+        task = task or ("code" if self.code_only or asset_kind == "code" else "search")
         if not 1 <= limit <= 30 or not 1000 <= max_chars <= 60000:
             raise ValueError("limit must be 1–30 and max_chars must be 1000–60000")
         if Path(path_filter).is_absolute() or ".." in Path(path_filter).parts:
@@ -244,14 +248,13 @@ class Index:
         if mode != "lexical":
             try:
                 with self.lock:
-                    vector = self.query_cache.get(query)
+                    vector = self.query_cache.get((task, query))
                 if vector is None:
-                    kwargs = {} if self.query_task == "code" else {"task": "search"}
-                    vector = self.embedder.encode([query], query=True, **kwargs)[0]
+                    vector = self.embedder.encode([query], query=True, task=task)[0]
                     with self.lock:
                         if len(self.query_cache) >= 64:
                             self.query_cache.pop(next(iter(self.query_cache)))
-                        self.query_cache[query] = vector
+                        self.query_cache[(task, query)] = vector
                 scores = matrix @ vector
                 ordered = sorted(candidates, key=lambda i: float(scores[i]), reverse=True)[:100]
                 for rank, i in enumerate(ordered, 1):

@@ -147,7 +147,7 @@ def test_mcp_bridge_binds_launch_project_and_rejects_old_unscoped_service(scoped
     async def exercise():
         listed = await server.call_tool("list_sources", {})
         assert listed[1]["project"] == str(project)
-        found = await server.call_tool("search_code", {"query": "authenticate_user", "mode": "lexical"})
+        found = await server.call_tool("search_local", {"query": "authenticate_user", "mode": "lexical", "asset_kind": "code"})
         assert all(r["path"].startswith("project/") for r in found[1]["results"])
         with pytest.raises(Exception, match="outside this MCP project"):
             await server.call_tool("read_image", {"source_id": source["id"], "path": "project-other/image.png"})
@@ -207,13 +207,13 @@ def test_bridge_responses_are_concise_by_default_and_errors_are_actionable(scope
         listed = (await server.call_tool("list_sources", {}))[1]
         assert listed["project"] == str(project) and listed["model_loaded"] is True
         assert listed["sources"][0]["phase"] and listed["sources"][0]["allowed_paths"]
-        query = {"query": "authenticate_user", "mode": "lexical"}
-        compact = (await server.call_tool("search_code", query))[1]
+        query = {"query": "authenticate_user", "mode": "lexical", "asset_kind": "code"}
+        compact = (await server.call_tool("search_local", query))[1]
         assert compact["mode"] == "lexical" and "elapsed_ms" not in compact and "issues" not in compact
         result = compact["results"][0]
         assert {"id", "parent_id", "source_id", "path", "start_line", "code"} <= set(result)
         assert not {"score", "cosine", "lexical_rank", "content_id", "source_path", "source_name"} & set(result)
-        detailed = (await server.call_tool("search_code", {**query, "response_format": "detailed"}))[1]
+        detailed = (await server.call_tool("search_local", {**query, "response_format": "detailed"}))[1]
         assert {"cosine", "lexical_rank", "content_id", "source_path"} <= set(detailed["results"][0])
         assert (await server.call_tool("read_symbol", {"symbol_id": result["parent_id"]}))[1]["path"] == "project/auth.py"
         # Service messages reach the agent without HTTP status or JSON wrapping.
@@ -259,7 +259,7 @@ def test_stdio_session_uses_project_and_observes_live_grants(scoped):
             async with ClientSession(reader, writer) as session:
                 await session.initialize()
                 tools = await session.list_tools()
-                assert len(tools.tools) == 7
+                assert len(tools.tools) == 6
                 assert all("project" not in t.inputSchema["properties"] for t in tools.tools)
                 listed = await session.call_tool("list_sources", {})
                 assert listed.structuredContent["project"] == str(project)
@@ -269,7 +269,7 @@ def test_stdio_session_uses_project_and_observes_live_grants(scoped):
                                   json={"project": str(project), "folders": [str(papers)]}).status_code == 200
                 allowed = await session.call_tool("read_code_file", {"source_id": extra["id"], "path": "auth.py"})
                 assert not allowed.isError and "authenticate_user" in allowed.structuredContent["code"]
-                found = await session.call_tool("search_code", {"query": "authenticate_user", "mode": "lexical"})
+                found = await session.call_tool("search_local", {"query": "authenticate_user", "mode": "lexical", "asset_kind": "code"})
                 assert {r["source_id"] for r in found.structuredContent["results"]} == {source["id"]}
                 image = await session.call_tool("read_image", {"source_id": source["id"], "path": "project/image.png"})
                 assert not image.isError and any(c.type == "image" for c in image.content)

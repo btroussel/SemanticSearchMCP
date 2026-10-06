@@ -6,7 +6,7 @@ The service listens on `127.0.0.1:8766` and requires a private bearer key (`acce
 
 Copy the commands from **Connect an assistant** in the app (or the [README](../README.md#install)), then start a new assistant session and check `/mcp`. References: [Claude Code MCP](https://code.claude.com/docs/en/mcp), [Codex MCP](https://learn.chatgpt.com/docs/extend/mcp?surface=cli).
 
-The server tells the assistant how to use its tools. To make it reach for them more often, add a line to the project's `AGENTS.md` or `CLAUDE.md`, such as: *Use the local-search MCP for natural-language discovery of code and documents; use grep for exact identifiers.*
+The server tells the assistant when to use its tools: for what grep cannot reach (PDF, DOCX and image contents, granted folders, questions worded differently from the source) and to get oriented in unfamiliar code. For known names and complete reference lists it points the assistant to grep. To make it reach for the tools more often, add a line to the project's `AGENTS.md` or `CLAUDE.md`, such as: *Use the local-search MCP for documents, images and natural-language questions; use grep for exact identifiers.*
 
 ## Project access
 
@@ -21,9 +21,8 @@ These limits apply to this MCP's tools only, not to an assistant's own file or t
 | Tool | Purpose |
 | --- | --- |
 | `list_sources` | Accessible folders with their IDs, allowed paths, indexing status and model settings |
-| `search_local` | Search code, documents and images |
-| `search_code` | Search implementations |
-| `read_symbol` | Read a result by `id`, or its enclosing class or file by `parent_id` |
+| `search_local` | Search documents, images and code; `asset_kind: "code"` limits it to code |
+| `read_symbol` | Read a result by `id`, or its enclosing class, section or file by `parent_id` |
 | `read_code_file` | Read current file text (extracted text for PDF/DOCX) |
 | `read_image` | View an image preview |
 | `refresh_index` | Queue an incremental rescan |

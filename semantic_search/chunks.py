@@ -2,13 +2,14 @@
 from __future__ import annotations
 
 import ast
+import re
 from dataclasses import dataclass, replace
 from collections.abc import Callable
 from pathlib import Path
 
 from .files import digest
 
-CHUNK_VERSION = "4"
+CHUNK_VERSION = "5"
 MAX_CHARS = 5000
 LANGUAGES = {".js": "javascript", ".jsx": "javascript", ".ts": "typescript",
              ".tsx": "tsx", ".go": "go", ".rs": "rust", ".java": "java",
@@ -17,6 +18,13 @@ LANGUAGES = {".js": "javascript", ".jsx": "javascript", ".ts": "typescript",
 SYMBOL_TYPES = {"function_definition", "function_declaration", "method_definition",
                 "method_declaration", "class_definition", "class_declaration",
                 "function_item", "struct_item", "impl_item", "interface_declaration"}
+SECTIONED_DOCUMENTS = {".md", ".markdown", ".docx", ".rst"}
+HEADING = re.compile(r" {0,3}(#{1,6})[ \t]+(.+?)(?:[ \t]+#+)?[ \t]*$")
+SETEXT = re.compile(r" {0,3}(=+|-+)[ \t]*$")
+NOT_PARAGRAPH = re.compile(r" {0,3}([-*+>|]|\d+[.)])(\s|$)| {4}|\t")
+FENCE = re.compile(r" {0,3}(`{3,}|~{3,})")
+RST_ADORNMENT = re.compile(r"([!-/:-@\[-`{-~])\1+[ \t]*$")
+PAGE = re.compile(r"\[Page (\d+)\]$")
 
 
 @dataclass
@@ -48,6 +56,92 @@ def _windows(lines: list[str], first: int, last: int):
             size += len(lines[end - 1]) + 1
         yield start, end, "\n".join(lines[start - 1:end])
         start = end + 1
+
+
+def _runs(numbers: list[int]):
+    """Contiguous (first, last) ranges of sorted line numbers."""
+    start = previous = None
+    for number in numbers:
+        if start is None:
+            start = number
+        elif number != previous + 1:
+            yield start, previous
+            start = number
+        previous = number
+    if start is not None:
+        yield start, previous
+
+
+def _markdown_headings(lines: list[str]):
+    """(line, level, title) for ATX (#) and underlined (setext) headings outside code and front matter."""
+    starts, fence, paragraph = [], None, False
+    first = 0
+    if lines and lines[0].strip() == "---":
+        # YAML front matter is metadata, and its closing --- is not a heading underline.
+        first = next((n for n, line in enumerate(lines[1:], 1) if line.strip() in {"---", "..."}), -1) + 1
+    for number, line in enumerate(lines[first:], first + 1):
+        # Headings inside fenced code blocks are code, not structure.
+        if match := FENCE.match(line):
+            marker = match.group(1)
+            if fence is None:
+                fence = marker
+            elif marker[0] == fence[0] and len(marker) >= len(fence) and not line.strip()[len(marker):]:
+                fence = None
+            paragraph = False
+            continue
+        if fence is not None:
+            continue
+        if match := HEADING.match(line):
+            starts.append((number, len(match.group(1)), match.group(2).strip()))
+            paragraph = False
+        elif paragraph and (match := SETEXT.match(line)):
+            starts.append((number - 1, 1 if match.group(1)[0] == "=" else 2, lines[number - 2].strip()))
+            paragraph = False
+        else:
+            paragraph = bool(line.strip()) and not NOT_PARAGRAPH.match(line)
+    return starts
+
+
+def _rst_headings(lines: list[str]):
+    """(line, level, title) for reStructuredText titles; levels follow each adornment's first use."""
+    starts, styles = [], []
+    for index in range(1, len(lines)):
+        title, underline = lines[index - 1], lines[index]
+        match = RST_ADORNMENT.match(underline)
+        if not match or not title.strip() or title[0].isspace() or RST_ADORNMENT.match(title):
+            continue
+        if len(underline.rstrip()) < len(title.rstrip()):
+            continue
+        overline = index >= 2 and lines[index - 2].rstrip() == underline.rstrip()
+        if not overline and index >= 2 and lines[index - 2].strip():
+            continue  # A title starts a paragraph; text above it means this is not a heading.
+        style = (match.group(1), overline)
+        if style not in styles:
+            styles.append(style)
+        starts.append((index - 1 if overline else index, styles.index(style) + 1, title.strip()))
+    return starts
+
+
+def _sections(path: str, lines: list[str], suffix: str):
+    """Markdown/DOCX/reStructuredText headings or PDF pages as (name, kind, first, last, parent) ranges."""
+    if suffix == ".pdf":
+        starts = [(n, 1, f"Page {m.group(1)}") for n, line in enumerate(lines, 1) if (m := PAGE.match(line))]
+    else:
+        starts = [(n, level, title[:80]) for n, level, title in
+                  (_rst_headings(lines) if suffix == ".rst" else _markdown_headings(lines))]
+    sections, open_ = [], []
+    for index, (first, level, title) in enumerate(starts):
+        # A section ends where the next heading of the same or a higher level starts.
+        last = next((s - 1 for s, other, _ in starts[index + 1:] if other <= level), len(lines))
+        while open_ and open_[-1][1] >= level:
+            open_.pop()
+        name = " > ".join([t for _, _, t, _ in open_] + [title])
+        parent = open_[-1][3] if open_ else None
+        kind = "page" if suffix == ".pdf" else "section"
+        sections.append((name, kind, first, last, parent))
+        open_.append((first, level, title, chunk_id(path, name, kind, first)))
+    return sections
+    return sections
 
 
 def split_file(path: str, text: str, max_tokens: int | None = None,
@@ -92,13 +186,17 @@ def split_file(path: str, text: str, max_tokens: int | None = None,
             visit_ts(root)
         except (ImportError, LookupError, RuntimeError, ValueError):
             pass
+    document = suffix.lower() in SECTIONED_DOCUMENTS | {".pdf"}
+    if document:
+        symbols = _sections(path, lines, suffix.lower())
 
     # Outlines are deterministic source-derived text, not generated summaries.
     outline = "\n".join(f"{kind} {name}: {lines[first - 1].strip()}" for name, kind, first, _, _ in symbols)
     if len(text) <= MAX_CHARS:
         file_text = text
     else:
-        imports = [line for line in lines[:100] if line.startswith(("import ", "from ", "use ", "package ", "#include"))]
+        imports = [] if document else [
+            line for line in lines[:100] if line.startswith(("import ", "from ", "use ", "package ", "#include"))]
         file_text = "File outline\n" + "\n".join(imports[:20]) + "\n" + outline[:MAX_CHARS]
         if not symbols:
             file_text = "\n".join(lines[:25])
@@ -116,7 +214,16 @@ def split_file(path: str, text: str, max_tokens: int | None = None,
                                  for n, k, s, _, p in symbols if p == identifier)
             chunks.append(Chunk(identifier, path, name, kind, first, last, parent,
                                 header + "\n" + children[:MAX_CHARS]))
-            if kind != "class":
+            if document:
+                # Window only the section's own text; subsections have their own chunks.
+                nested = {n for _, _, s, e, p in symbols if p == identifier for n in range(s, e + 1)}
+                own = [n for n in range(first, last + 1) if n not in nested]
+                for run_first, run_last in _runs(own):
+                    for start, end, body in _windows(lines, run_first, run_last):
+                        if body.strip():
+                            chunks.append(Chunk(chunk_id(path, name, "block", start), path, name,
+                                                "block", start, end, identifier, body))
+            elif kind != "class":
                 for start, end, body in _windows(lines, first, last):
                     chunks.append(Chunk(chunk_id(path, name, "block", start), path, name,
                                         "block", start, end, identifier, header + "\n" + body))

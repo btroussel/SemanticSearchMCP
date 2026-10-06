@@ -293,6 +293,9 @@ class Workspace:
                 raise ValueError("Folder is outside this MCP project. Grant access in the app's assistant settings")
             identifiers = [request.source_id] if request.source_id else list(scopes if scopes is not None else self.sources)
             results, issues, stale = [], [], []
+            # One query prompt for every source keeps cosine scores comparable when results are merged.
+            indexes = [e["worker"].index for i in identifiers if (e := self.sources.get(i)) and e["worker"]]
+            task = "code" if request.asset_kind == "code" or (indexes and all(x.code_only for x in indexes)) else "search"
             for identifier in identifiers:
                 entry = self.sources.get(identifier)
                 if entry is None:
@@ -304,7 +307,8 @@ class Workspace:
                 try:
                     hit = index.search(request.query, limit=30, path_filter=request.path_filter,
                                        mode=request.mode, max_chars=request.max_chars, asset_kind=request.asset_kind,
-                                       allowed_prefixes=[s["path_prefix"] for s in scopes[identifier]] if scopes is not None else None)
+                                       allowed_prefixes=[s["path_prefix"] for s in scopes[identifier]] if scopes is not None else None,
+                                       task=task)
                 except Exception as exc:
                     issues.append({"source_id": identifier, "error": str(exc)})
                     continue
