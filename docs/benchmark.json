@@ -1,0 +1,1755 @@
+{
+  "measured_at": 1791314207.527159,
+  "status": {
+    "repo": "/Users/btroussel/Code/TABNext",
+    "files": 124,
+    "chunks": 989,
+    "dimensions": 768,
+    "device": "mps",
+    "model_loaded": true,
+    "last_sync": {
+      "changed_files": 5,
+      "deleted_files": 0,
+      "embedded_chunks": 12,
+      "cached_chunks": 0,
+      "seconds": 10.446,
+      "completed_at": 1791314205.9925141
+    },
+    "excludes": [
+      "TrackEval/",
+      "exps/results/"
+    ],
+    "vector_search": "exact normalized dot product",
+    "phase": "ready",
+    "error": null,
+    "last_success": 1791314205.9925408,
+    "reconcile_seconds": 300.0,
+    "watch_enabled": true
+  },
+  "summary": {
+    "semantic": {
+      "file_hits_at_5": 12,
+      "symbol_hits_at_5": 12,
+      "symbol_hits_at_1": 8,
+      "cases": 12,
+      "median_elapsed_ms": 44.26,
+      "max_elapsed_ms": 93.77
+    },
+    "lexical": {
+      "file_hits_at_5": 9,
+      "symbol_hits_at_5": 8,
+      "symbol_hits_at_1": 3,
+      "cases": 12,
+      "median_elapsed_ms": 3.98,
+      "max_elapsed_ms": 8.17
+    },
+    "hybrid": {
+      "file_hits_at_5": 12,
+      "symbol_hits_at_5": 9,
+      "symbol_hits_at_1": 7,
+      "cases": 12,
+      "median_elapsed_ms": 4.14,
+      "max_elapsed_ms": 4.71
+    }
+  },
+  "limitations": [
+    "12 hand-authored questions; not a general code-search benchmark or an agent speedup measurement.",
+    "Lexical mode is SQLite FTS5 BM25, not ripgrep or an agent generating search patterns.",
+    "Semantic runs first and includes question embedding; hybrid reuses the query embedding cache.",
+    "Symbol hits require the exact expected symbol; related class/file hits count only as file hits."
+  ],
+  "rows": [
+    {
+      "query": "Where are high confidence detections associated first and low confidence detections used in a second pass?",
+      "path": "tabnext/models/tracker.py",
+      "symbol": "TABNextTracker._update_tracks",
+      "mode": "semantic",
+      "file_hit_at_5": true,
+      "symbol_rank": 4,
+      "elapsed_ms": 93.77,
+      "round_trip_ms": 98.03,
+      "results": [
+        {
+          "path": "exps/tracker_association.md",
+          "symbol": "exps/tracker_association.md",
+          "kind": "block",
+          "cosine": 0.7674,
+          "lexical_rank": null
+        },
+        {
+          "path": "tapnet/pytorch_live_demo.py",
+          "symbol": "postprocess_occlusions",
+          "kind": "function",
+          "cosine": 0.7591,
+          "lexical_rank": null
+        },
+        {
+          "path": "tabnext/data/cache.py",
+          "symbol": "frame_detections",
+          "kind": "function",
+          "cosine": 0.7508,
+          "lexical_rank": null
+        },
+        {
+          "path": "tabnext/models/tracker.py",
+          "symbol": "TABNextTracker._update_tracks",
+          "kind": "function",
+          "cosine": 0.7489,
+          "lexical_rank": null
+        },
+        {
+          "path": "tapnet/trajan/track_autoencoder.py",
+          "symbol": "TrackAutoEncoderResults.visible_and_certain",
+          "kind": "function",
+          "cosine": 0.7472,
+          "lexical_rank": null
+        }
+      ]
+    },
+    {
+      "query": "Where are high confidence detections associated first and low confidence detections used in a second pass?",
+      "path": "tabnext/models/tracker.py",
+      "symbol": "TABNextTracker._update_tracks",
+      "mode": "lexical",
+      "file_hit_at_5": true,
+      "symbol_rank": 2,
+      "elapsed_ms": 8.17,
+      "round_trip_ms": 9.6,
+      "results": [
+        {
+          "path": "docs/tracking.md",
+          "symbol": "docs/tracking.md",
+          "kind": "file",
+          "cosine": null,
+          "lexical_rank": 1
+        },
+        {
+          "path": "tabnext/models/tracker.py",
+          "symbol": "TABNextTracker._update_tracks",
+          "kind": "function",
+          "cosine": null,
+          "lexical_rank": 3
+        },
+        {
+          "path": "tabnext/configs/tracker.py",
+          "symbol": "get_config",
+          "kind": "function",
+          "cosine": null,
+          "lexical_rank": 4
+        },
+        {
+          "path": "tabnext/configs/tracker.py",
+          "symbol": "tabnext/configs/tracker.py",
+          "kind": "file",
+          "cosine": null,
+          "lexical_rank": 5
+        },
+        {
+          "path": "tapnet/training/supervised_point_prediction.py",
+          "symbol": "SupervisedPointPrediction._loss_fn",
+          "kind": "block",
+          "cosine": null,
+          "lexical_rank": 6
+        }
+      ]
+    },
+    {
+      "query": "Where are high confidence detections associated first and low confidence detections used in a second pass?",
+      "path": "tabnext/models/tracker.py",
+      "symbol": "TABNextTracker._update_tracks",
+      "mode": "hybrid",
+      "file_hit_at_5": true,
+      "symbol_rank": 2,
+      "elapsed_ms": 4.53,
+      "round_trip_ms": 5.77,
+      "results": [
+        {
+          "path": "exps/tracker_association.md",
+          "symbol": "exps/tracker_association.md",
+          "kind": "block",
+          "cosine": 0.7674,
+          "lexical_rank": 7
+        },
+        {
+          "path": "tabnext/models/tracker.py",
+          "symbol": "TABNextTracker._update_tracks",
+          "kind": "function",
+          "cosine": 0.7489,
+          "lexical_rank": 3
+        },
+        {
+          "path": "tabnext/data/cache.py",
+          "symbol": "frame_detections",
+          "kind": "function",
+          "cosine": 0.7508,
+          "lexical_rank": 8
+        },
+        {
+          "path": "docs/tracking.md",
+          "symbol": "docs/tracking.md",
+          "kind": "block",
+          "cosine": 0.7403,
+          "lexical_rank": 14
+        },
+        {
+          "path": "tabnext/data/cache.py",
+          "symbol": "tabnext/data/cache.py",
+          "kind": "file",
+          "cosine": 0.7379,
+          "lexical_rank": 19
+        }
+      ]
+    },
+    {
+      "query": "Where is the Hungarian assignment solved with an unmatched cost?",
+      "path": "tabnext/models/tracker.py",
+      "symbol": "TABNextTracker._match",
+      "mode": "semantic",
+      "file_hit_at_5": true,
+      "symbol_rank": 1,
+      "elapsed_ms": 49.98,
+      "round_trip_ms": 51.45,
+      "results": [
+        {
+          "path": "tabnext/models/tracker.py",
+          "symbol": "TABNextTracker._match",
+          "kind": "function",
+          "cosine": 0.751,
+          "lexical_rank": null
+        },
+        {
+          "path": "tabnext/analyze_detection_noise.py",
+          "symbol": "match_boxes",
+          "kind": "function",
+          "cosine": 0.7217,
+          "lexical_rank": null
+        },
+        {
+          "path": "tapnet/robotap/tapir_clustering.py",
+          "symbol": "tapnet/robotap/tapir_clustering.py",
+          "kind": "block",
+          "cosine": 0.7207,
+          "lexical_rank": null
+        },
+        {
+          "path": "tapnet/training/supervised_point_prediction.py",
+          "symbol": "SupervisedPointPrediction._loss_fn",
+          "kind": "block",
+          "cosine": 0.7153,
+          "lexical_rank": null
+        },
+        {
+          "path": "tapnet/tapvid3d/splits/tapvid3d_splits.py",
+          "symbol": "tapnet/tapvid3d/splits/tapvid3d_splits.py",
+          "kind": "block",
+          "cosine": 0.7114,
+          "lexical_rank": null
+        }
+      ]
+    },
+    {
+      "query": "Where is the Hungarian assignment solved with an unmatched cost?",
+      "path": "tabnext/models/tracker.py",
+      "symbol": "TABNextTracker._match",
+      "mode": "lexical",
+      "file_hit_at_5": true,
+      "symbol_rank": 1,
+      "elapsed_ms": 4.32,
+      "round_trip_ms": 5.6,
+      "results": [
+        {
+          "path": "tabnext/models/tracker.py",
+          "symbol": "TABNextTracker._match",
+          "kind": "function",
+          "cosine": null,
+          "lexical_rank": 1
+        },
+        {
+          "path": "tabnext/analyze_detection_noise.py",
+          "symbol": "run",
+          "kind": "block",
+          "cosine": null,
+          "lexical_rank": 2
+        },
+        {
+          "path": "docs/tracking.md",
+          "symbol": "docs/tracking.md",
+          "kind": "file",
+          "cosine": null,
+          "lexical_rank": 3
+        },
+        {
+          "path": "exps/detector_prompt_noise.md",
+          "symbol": "exps/detector_prompt_noise.md",
+          "kind": "file",
+          "cosine": null,
+          "lexical_rank": 5
+        },
+        {
+          "path": "tapnet/models/tapnet_model.py",
+          "symbol": "TAPNet.tracks_from_cost_volume",
+          "kind": "function",
+          "cosine": null,
+          "lexical_rank": 6
+        }
+      ]
+    },
+    {
+      "query": "Where is the Hungarian assignment solved with an unmatched cost?",
+      "path": "tabnext/models/tracker.py",
+      "symbol": "TABNextTracker._match",
+      "mode": "hybrid",
+      "file_hit_at_5": true,
+      "symbol_rank": 1,
+      "elapsed_ms": 4.52,
+      "round_trip_ms": 5.76,
+      "results": [
+        {
+          "path": "tabnext/models/tracker.py",
+          "symbol": "TABNextTracker._match",
+          "kind": "function",
+          "cosine": 0.751,
+          "lexical_rank": 1
+        },
+        {
+          "path": "tabnext/analyze_detection_noise.py",
+          "symbol": "match_boxes",
+          "kind": "function",
+          "cosine": 0.7217,
+          "lexical_rank": 10
+        },
+        {
+          "path": "tapnet/training/supervised_point_prediction.py",
+          "symbol": "SupervisedPointPrediction._loss_fn",
+          "kind": "block",
+          "cosine": 0.7153,
+          "lexical_rank": 11
+        },
+        {
+          "path": "tapnet/torch/tapir_model.py",
+          "symbol": "TAPIR.tracks_from_cost_volume",
+          "kind": "function",
+          "cosine": 0.7068,
+          "lexical_rank": 7
+        },
+        {
+          "path": "tapnet/models/tapir_model.py",
+          "symbol": "TAPIR.tracks_from_cost_volume",
+          "kind": "function",
+          "cosine": 0.7,
+          "lexical_rank": 8
+        }
+      ]
+    },
+    {
+      "query": "How are new object slots added with empty recurrent memory while preserving the existing image caches?",
+      "path": "tabnext/models/tabnext.py",
+      "symbol": "TABNextState.append_queries",
+      "mode": "semantic",
+      "file_hit_at_5": true,
+      "symbol_rank": 1,
+      "elapsed_ms": 49.5,
+      "round_trip_ms": 50.89,
+      "results": [
+        {
+          "path": "tabnext/models/tabnext.py",
+          "symbol": "TABNextState.append_queries",
+          "kind": "function",
+          "cosine": 0.8125,
+          "lexical_rank": null
+        },
+        {
+          "path": "tabnext/models/tabnext.py",
+          "symbol": "TABNextState",
+          "kind": "class",
+          "cosine": 0.8098,
+          "lexical_rank": null
+        },
+        {
+          "path": "tabnext/models/tabnext.py",
+          "symbol": "TABNextState._map_object_caches",
+          "kind": "function",
+          "cosine": 0.8037,
+          "lexical_rank": null
+        },
+        {
+          "path": "docs/model.md",
+          "symbol": "docs/model.md",
+          "kind": "block",
+          "cosine": 0.7954,
+          "lexical_rank": null
+        },
+        {
+          "path": "tabnext/models/tabnext.py",
+          "symbol": "TABNext._run_block_with_births",
+          "kind": "function",
+          "cosine": 0.7856,
+          "lexical_rank": null
+        }
+      ]
+    },
+    {
+      "query": "How are new object slots added with empty recurrent memory while preserving the existing image caches?",
+      "path": "tabnext/models/tabnext.py",
+      "symbol": "TABNextState.append_queries",
+      "mode": "lexical",
+      "file_hit_at_5": true,
+      "symbol_rank": 2,
+      "elapsed_ms": 4.01,
+      "round_trip_ms": 5.24,
+      "results": [
+        {
+          "path": "tabnext/models/tabnext.py",
+          "symbol": "TABNextState",
+          "kind": "class",
+          "cosine": null,
+          "lexical_rank": 1
+        },
+        {
+          "path": "tabnext/models/tabnext.py",
+          "symbol": "TABNextState.append_queries",
+          "kind": "function",
+          "cosine": null,
+          "lexical_rank": 2
+        },
+        {
+          "path": "docs/model.md",
+          "symbol": "docs/model.md",
+          "kind": "block",
+          "cosine": null,
+          "lexical_rank": 3
+        },
+        {
+          "path": "docs/model.md",
+          "symbol": "docs/model.md",
+          "kind": "block",
+          "cosine": null,
+          "lexical_rank": 4
+        },
+        {
+          "path": "docs/tracking.md",
+          "symbol": "docs/tracking.md",
+          "kind": "block",
+          "cosine": null,
+          "lexical_rank": 5
+        }
+      ]
+    },
+    {
+      "query": "How are new object slots added with empty recurrent memory while preserving the existing image caches?",
+      "path": "tabnext/models/tabnext.py",
+      "symbol": "TABNextState.append_queries",
+      "mode": "hybrid",
+      "file_hit_at_5": true,
+      "symbol_rank": 1,
+      "elapsed_ms": 3.69,
+      "round_trip_ms": 4.79,
+      "results": [
+        {
+          "path": "tabnext/models/tabnext.py",
+          "symbol": "TABNextState.append_queries",
+          "kind": "function",
+          "cosine": 0.8125,
+          "lexical_rank": 2
+        },
+        {
+          "path": "tabnext/models/tabnext.py",
+          "symbol": "TABNextState",
+          "kind": "class",
+          "cosine": 0.8098,
+          "lexical_rank": 1
+        },
+        {
+          "path": "docs/model.md",
+          "symbol": "docs/model.md",
+          "kind": "block",
+          "cosine": 0.7954,
+          "lexical_rank": 3
+        },
+        {
+          "path": "docs/model.md",
+          "symbol": "docs/model.md",
+          "kind": "block",
+          "cosine": 0.7824,
+          "lexical_rank": 4
+        },
+        {
+          "path": "tabnext/models/tabnext.py",
+          "symbol": "TABNext._run_block_with_births",
+          "kind": "function",
+          "cosine": 0.7856,
+          "lexical_rank": 9
+        }
+      ]
+    },
+    {
+      "query": "Where do we reorder or remove object slots without discarding image memory?",
+      "path": "tabnext/models/tabnext.py",
+      "symbol": "TABNextState.select_queries",
+      "mode": "semantic",
+      "file_hit_at_5": true,
+      "symbol_rank": 1,
+      "elapsed_ms": 44.06,
+      "round_trip_ms": 45.35,
+      "results": [
+        {
+          "path": "tabnext/models/tabnext.py",
+          "symbol": "TABNextState.select_queries",
+          "kind": "function",
+          "cosine": 0.7996,
+          "lexical_rank": null
+        },
+        {
+          "path": "tabnext/models/tabnext.py",
+          "symbol": "TABNextState._map_object_caches",
+          "kind": "function",
+          "cosine": 0.7729,
+          "lexical_rank": null
+        },
+        {
+          "path": "tapnet/robotap/tapir_clustering.py",
+          "symbol": "loss_fn.do_delete",
+          "kind": "function",
+          "cosine": 0.7665,
+          "lexical_rank": null
+        },
+        {
+          "path": "tabnext/models/tabnext.py",
+          "symbol": "TABNextState",
+          "kind": "class",
+          "cosine": 0.7654,
+          "lexical_rank": null
+        },
+        {
+          "path": "tapnet/robotap/tapir_clustering.py",
+          "symbol": "compute_clusters.delete_dict",
+          "kind": "function",
+          "cosine": 0.7647,
+          "lexical_rank": null
+        }
+      ]
+    },
+    {
+      "query": "Where do we reorder or remove object slots without discarding image memory?",
+      "path": "tabnext/models/tabnext.py",
+      "symbol": "TABNextState.select_queries",
+      "mode": "lexical",
+      "file_hit_at_5": true,
+      "symbol_rank": 1,
+      "elapsed_ms": 3.96,
+      "round_trip_ms": 5.15,
+      "results": [
+        {
+          "path": "tabnext/models/tabnext.py",
+          "symbol": "TABNextState.select_queries",
+          "kind": "function",
+          "cosine": null,
+          "lexical_rank": 1
+        },
+        {
+          "path": "tabnext/models/tabnext.py",
+          "symbol": "TABNextState",
+          "kind": "class",
+          "cosine": null,
+          "lexical_rank": 2
+        },
+        {
+          "path": "docs/model.md",
+          "symbol": "docs/model.md",
+          "kind": "block",
+          "cosine": null,
+          "lexical_rank": 3
+        },
+        {
+          "path": "docs/model.md",
+          "symbol": "docs/model.md",
+          "kind": "block",
+          "cosine": null,
+          "lexical_rank": 4
+        },
+        {
+          "path": "tabnext/models/tracker.py",
+          "symbol": "TABNextTracker.step",
+          "kind": "function",
+          "cosine": null,
+          "lexical_rank": 5
+        }
+      ]
+    },
+    {
+      "query": "Where do we reorder or remove object slots without discarding image memory?",
+      "path": "tabnext/models/tabnext.py",
+      "symbol": "TABNextState.select_queries",
+      "mode": "hybrid",
+      "file_hit_at_5": true,
+      "symbol_rank": 1,
+      "elapsed_ms": 3.49,
+      "round_trip_ms": 4.59,
+      "results": [
+        {
+          "path": "tabnext/models/tabnext.py",
+          "symbol": "TABNextState.select_queries",
+          "kind": "function",
+          "cosine": 0.7996,
+          "lexical_rank": 1
+        },
+        {
+          "path": "tabnext/models/tabnext.py",
+          "symbol": "TABNextState",
+          "kind": "class",
+          "cosine": 0.7654,
+          "lexical_rank": 2
+        },
+        {
+          "path": "docs/model.md",
+          "symbol": "docs/model.md",
+          "kind": "block",
+          "cosine": 0.7637,
+          "lexical_rank": 4
+        },
+        {
+          "path": "docs/model.md",
+          "symbol": "docs/model.md",
+          "kind": "block",
+          "cosine": 0.7483,
+          "lexical_rank": 3
+        },
+        {
+          "path": "tabnext/models/tracker.py",
+          "symbol": "TABNextTracker.step",
+          "kind": "function",
+          "cosine": 0.7481,
+          "lexical_rank": 5
+        }
+      ]
+    },
+    {
+      "query": "Where are bounding box center and logarithmic size predictions supervised with Huber and generalized IoU losses?",
+      "path": "tabnext/models/criterion.py",
+      "symbol": "box_loss",
+      "mode": "semantic",
+      "file_hit_at_5": true,
+      "symbol_rank": 2,
+      "elapsed_ms": 43.96,
+      "round_trip_ms": 45.31,
+      "results": [
+        {
+          "path": "tabnext/models/criterion.py",
+          "symbol": "tabnext/models/criterion.py",
+          "kind": "file",
+          "cosine": 0.8435,
+          "lexical_rank": null
+        },
+        {
+          "path": "tabnext/models/criterion.py",
+          "symbol": "box_loss",
+          "kind": "function",
+          "cosine": 0.8173,
+          "lexical_rank": null
+        },
+        {
+          "path": "docs/training.md",
+          "symbol": "docs/training.md",
+          "kind": "block",
+          "cosine": 0.7952,
+          "lexical_rank": null
+        },
+        {
+          "path": "tapnet/training/supervised_point_prediction.py",
+          "symbol": "SupervisedPointPrediction._loss_fn",
+          "kind": "block",
+          "cosine": 0.7887,
+          "lexical_rank": null
+        },
+        {
+          "path": "tapnet/training/supervised_point_prediction.py",
+          "symbol": "SupervisedPointPrediction._loss_fn",
+          "kind": "block",
+          "cosine": 0.773,
+          "lexical_rank": null
+        }
+      ]
+    },
+    {
+      "query": "Where are bounding box center and logarithmic size predictions supervised with Huber and generalized IoU losses?",
+      "path": "tabnext/models/criterion.py",
+      "symbol": "box_loss",
+      "mode": "lexical",
+      "file_hit_at_5": true,
+      "symbol_rank": 2,
+      "elapsed_ms": 4.03,
+      "round_trip_ms": 5.22,
+      "results": [
+        {
+          "path": "tabnext/models/criterion.py",
+          "symbol": "tabnext/models/criterion.py",
+          "kind": "file",
+          "cosine": null,
+          "lexical_rank": 1
+        },
+        {
+          "path": "tabnext/models/criterion.py",
+          "symbol": "box_loss",
+          "kind": "function",
+          "cosine": null,
+          "lexical_rank": 2
+        },
+        {
+          "path": "docs/training.md",
+          "symbol": "docs/training.md",
+          "kind": "block",
+          "cosine": null,
+          "lexical_rank": 3
+        },
+        {
+          "path": "exps/detector_prompt_noise.md",
+          "symbol": "exps/detector_prompt_noise.md",
+          "kind": "block",
+          "cosine": null,
+          "lexical_rank": 5
+        },
+        {
+          "path": "tabnext/train.py",
+          "symbol": "tabnext/train.py",
+          "kind": "block",
+          "cosine": null,
+          "lexical_rank": 7
+        }
+      ]
+    },
+    {
+      "query": "Where are bounding box center and logarithmic size predictions supervised with Huber and generalized IoU losses?",
+      "path": "tabnext/models/criterion.py",
+      "symbol": "box_loss",
+      "mode": "hybrid",
+      "file_hit_at_5": true,
+      "symbol_rank": 2,
+      "elapsed_ms": 4.15,
+      "round_trip_ms": 5.2,
+      "results": [
+        {
+          "path": "tabnext/models/criterion.py",
+          "symbol": "tabnext/models/criterion.py",
+          "kind": "file",
+          "cosine": 0.8435,
+          "lexical_rank": 1
+        },
+        {
+          "path": "tabnext/models/criterion.py",
+          "symbol": "box_loss",
+          "kind": "function",
+          "cosine": 0.8173,
+          "lexical_rank": 2
+        },
+        {
+          "path": "docs/training.md",
+          "symbol": "docs/training.md",
+          "kind": "block",
+          "cosine": 0.7952,
+          "lexical_rank": 3
+        },
+        {
+          "path": "tapnet/training/supervised_point_prediction.py",
+          "symbol": "SupervisedPointPrediction._loss_fn",
+          "kind": "block",
+          "cosine": 0.7887,
+          "lexical_rank": 12
+        },
+        {
+          "path": "tabnext/train.py",
+          "symbol": "train_batch",
+          "kind": "function",
+          "cosine": 0.7496,
+          "lexical_rank": 8
+        }
+      ]
+    },
+    {
+      "query": "Where is the visibility prediction loss computed only for supervised object slots?",
+      "path": "tabnext/models/criterion.py",
+      "symbol": "visibility_loss",
+      "mode": "semantic",
+      "file_hit_at_5": true,
+      "symbol_rank": 1,
+      "elapsed_ms": 43.08,
+      "round_trip_ms": 44.33,
+      "results": [
+        {
+          "path": "tabnext/models/criterion.py",
+          "symbol": "visibility_loss",
+          "kind": "function",
+          "cosine": 0.8293,
+          "lexical_rank": null
+        },
+        {
+          "path": "tapnet/training/supervised_point_prediction.py",
+          "symbol": "SupervisedPointPrediction._loss_fn",
+          "kind": "block",
+          "cosine": 0.7904,
+          "lexical_rank": null
+        },
+        {
+          "path": "tabnext/models/criterion.py",
+          "symbol": "tabnext/models/criterion.py",
+          "kind": "file",
+          "cosine": 0.7864,
+          "lexical_rank": null
+        },
+        {
+          "path": "tapnet/training/supervised_point_prediction.py",
+          "symbol": "SupervisedPointPrediction._loss_fn",
+          "kind": "block",
+          "cosine": 0.7742,
+          "lexical_rank": null
+        },
+        {
+          "path": "tabnext/train.py",
+          "symbol": "train_batch",
+          "kind": "function",
+          "cosine": 0.7614,
+          "lexical_rank": null
+        }
+      ]
+    },
+    {
+      "query": "Where is the visibility prediction loss computed only for supervised object slots?",
+      "path": "tabnext/models/criterion.py",
+      "symbol": "visibility_loss",
+      "mode": "lexical",
+      "file_hit_at_5": true,
+      "symbol_rank": 4,
+      "elapsed_ms": 4.06,
+      "round_trip_ms": 5.23,
+      "results": [
+        {
+          "path": "docs/training.md",
+          "symbol": "docs/training.md",
+          "kind": "block",
+          "cosine": null,
+          "lexical_rank": 1
+        },
+        {
+          "path": "tabnext/train.py",
+          "symbol": "train_batch",
+          "kind": "function",
+          "cosine": null,
+          "lexical_rank": 2
+        },
+        {
+          "path": "tapnet/training/supervised_point_prediction.py",
+          "symbol": "SupervisedPointPrediction",
+          "kind": "class",
+          "cosine": null,
+          "lexical_rank": 4
+        },
+        {
+          "path": "tabnext/models/criterion.py",
+          "symbol": "visibility_loss",
+          "kind": "function",
+          "cosine": null,
+          "lexical_rank": 5
+        },
+        {
+          "path": "tapnet/training/supervised_point_prediction.py",
+          "symbol": "SupervisedPointPrediction.__init__",
+          "kind": "function",
+          "cosine": null,
+          "lexical_rank": 6
+        }
+      ]
+    },
+    {
+      "query": "Where is the visibility prediction loss computed only for supervised object slots?",
+      "path": "tabnext/models/criterion.py",
+      "symbol": "visibility_loss",
+      "mode": "hybrid",
+      "file_hit_at_5": true,
+      "symbol_rank": 1,
+      "elapsed_ms": 3.87,
+      "round_trip_ms": 5.0,
+      "results": [
+        {
+          "path": "tabnext/models/criterion.py",
+          "symbol": "visibility_loss",
+          "kind": "function",
+          "cosine": 0.8293,
+          "lexical_rank": 5
+        },
+        {
+          "path": "tabnext/train.py",
+          "symbol": "train_batch",
+          "kind": "function",
+          "cosine": 0.7614,
+          "lexical_rank": 2
+        },
+        {
+          "path": "tabnext/models/criterion.py",
+          "symbol": "tabnext/models/criterion.py",
+          "kind": "file",
+          "cosine": 0.7864,
+          "lexical_rank": 7
+        },
+        {
+          "path": "tapnet/training/supervised_point_prediction.py",
+          "symbol": "SupervisedPointPrediction._loss_fn",
+          "kind": "block",
+          "cosine": 0.7742,
+          "lexical_rank": 11
+        },
+        {
+          "path": "tapnet/training/supervised_point_prediction.py",
+          "symbol": "SupervisedPointPrediction._loss_fn",
+          "kind": "block",
+          "cosine": 0.7904,
+          "lexical_rank": 14
+        }
+      ]
+    },
+    {
+      "query": "Where are cached detector outputs loaded for an entire video sequence?",
+      "path": "tabnext/data/cache.py",
+      "symbol": "DetectionCache.load_sequence",
+      "mode": "semantic",
+      "file_hit_at_5": true,
+      "symbol_rank": 4,
+      "elapsed_ms": 43.97,
+      "round_trip_ms": 45.3,
+      "results": [
+        {
+          "path": "tabnext/data/cache.py",
+          "symbol": "tabnext/data/cache.py",
+          "kind": "file",
+          "cosine": 0.8164,
+          "lexical_rank": null
+        },
+        {
+          "path": "tabnext/data/cache.py",
+          "symbol": "DetectionCache",
+          "kind": "class",
+          "cosine": 0.8143,
+          "lexical_rank": null
+        },
+        {
+          "path": "docs/data.md",
+          "symbol": "docs/data.md",
+          "kind": "file",
+          "cosine": 0.808,
+          "lexical_rank": null
+        },
+        {
+          "path": "tabnext/data/cache.py",
+          "symbol": "DetectionCache.load_sequence",
+          "kind": "function",
+          "cosine": 0.8077,
+          "lexical_rank": null
+        },
+        {
+          "path": "tabnext/cache_detections.py",
+          "symbol": "generate",
+          "kind": "function",
+          "cosine": 0.8031,
+          "lexical_rank": null
+        }
+      ]
+    },
+    {
+      "query": "Where are cached detector outputs loaded for an entire video sequence?",
+      "path": "tabnext/data/cache.py",
+      "symbol": "DetectionCache.load_sequence",
+      "mode": "lexical",
+      "file_hit_at_5": false,
+      "symbol_rank": null,
+      "elapsed_ms": 3.88,
+      "round_trip_ms": 5.1,
+      "results": [
+        {
+          "path": "tapnet/training/task.py",
+          "symbol": "SharedModule.__call__",
+          "kind": "function",
+          "cosine": null,
+          "lexical_rank": 1
+        },
+        {
+          "path": "tapnet/training/task.py",
+          "symbol": "SharedModule",
+          "kind": "class",
+          "cosine": null,
+          "lexical_rank": 2
+        },
+        {
+          "path": "tabnext/models/deim.py",
+          "symbol": "build_detector",
+          "kind": "function",
+          "cosine": null,
+          "lexical_rank": 3
+        },
+        {
+          "path": "tabnext/README.md",
+          "symbol": "tabnext/README.md",
+          "kind": "block",
+          "cosine": null,
+          "lexical_rank": 4
+        },
+        {
+          "path": "exps/detector_prompt_noise.md",
+          "symbol": "exps/detector_prompt_noise.md",
+          "kind": "file",
+          "cosine": null,
+          "lexical_rank": 5
+        }
+      ]
+    },
+    {
+      "query": "Where are cached detector outputs loaded for an entire video sequence?",
+      "path": "tabnext/data/cache.py",
+      "symbol": "DetectionCache.load_sequence",
+      "mode": "hybrid",
+      "file_hit_at_5": true,
+      "symbol_rank": null,
+      "elapsed_ms": 4.21,
+      "round_trip_ms": 5.35,
+      "results": [
+        {
+          "path": "docs/data.md",
+          "symbol": "docs/data.md",
+          "kind": "file",
+          "cosine": 0.808,
+          "lexical_rank": 7
+        },
+        {
+          "path": "tabnext/README.md",
+          "symbol": "tabnext/README.md",
+          "kind": "block",
+          "cosine": 0.7825,
+          "lexical_rank": 4
+        },
+        {
+          "path": "tabnext/cache_detections.py",
+          "symbol": "generate",
+          "kind": "function",
+          "cosine": 0.8031,
+          "lexical_rank": 16
+        },
+        {
+          "path": "tabnext/data/cache.py",
+          "symbol": "tabnext/data/cache.py",
+          "kind": "file",
+          "cosine": 0.8164,
+          "lexical_rank": 26
+        },
+        {
+          "path": "tabnext/analyze_detection_noise.py",
+          "symbol": "tabnext/analyze_detection_noise.py",
+          "kind": "block",
+          "cosine": 0.7607,
+          "lexical_rank": 14
+        }
+      ]
+    },
+    {
+      "query": "Where is the learning rate schedule constructed with warmup followed by cosine decay?",
+      "path": "tabnext/train.py",
+      "symbol": "build_scheduler",
+      "mode": "semantic",
+      "file_hit_at_5": true,
+      "symbol_rank": 1,
+      "elapsed_ms": 45.09,
+      "round_trip_ms": 46.44,
+      "results": [
+        {
+          "path": "tabnext/train.py",
+          "symbol": "build_scheduler",
+          "kind": "function",
+          "cosine": 0.8135,
+          "lexical_rank": null
+        },
+        {
+          "path": "tapnet/trajan/track_autoencoder.py",
+          "symbol": "SinusoidalEmbedding.__call__",
+          "kind": "function",
+          "cosine": 0.7638,
+          "lexical_rank": null
+        },
+        {
+          "path": "tapnet/utils/experiment_utils.py",
+          "symbol": "get_lr_schedule",
+          "kind": "function",
+          "cosine": 0.7591,
+          "lexical_rank": null
+        },
+        {
+          "path": "tapnet/trajan/track_autoencoder.py",
+          "symbol": "TrackAutoEncoder.setup",
+          "kind": "function",
+          "cosine": 0.7504,
+          "lexical_rank": null
+        },
+        {
+          "path": "tapnet/tapnext/tapnext_lru_modules.py",
+          "symbol": "MLPBlock.__init__",
+          "kind": "function",
+          "cosine": 0.7475,
+          "lexical_rank": null
+        }
+      ]
+    },
+    {
+      "query": "Where is the learning rate schedule constructed with warmup followed by cosine decay?",
+      "path": "tabnext/train.py",
+      "symbol": "build_scheduler",
+      "mode": "lexical",
+      "file_hit_at_5": true,
+      "symbol_rank": 2,
+      "elapsed_ms": 3.91,
+      "round_trip_ms": 5.13,
+      "results": [
+        {
+          "path": "tapnet/utils/experiment_utils.py",
+          "symbol": "get_lr_schedule",
+          "kind": "function",
+          "cosine": null,
+          "lexical_rank": 1
+        },
+        {
+          "path": "tabnext/train.py",
+          "symbol": "build_scheduler",
+          "kind": "function",
+          "cosine": null,
+          "lexical_rank": 2
+        },
+        {
+          "path": "tabnext/README.md",
+          "symbol": "tabnext/README.md",
+          "kind": "block",
+          "cosine": null,
+          "lexical_rank": 3
+        },
+        {
+          "path": "docs/training.md",
+          "symbol": "docs/training.md",
+          "kind": "block",
+          "cosine": null,
+          "lexical_rank": 4
+        },
+        {
+          "path": "tabnext/train.py",
+          "symbol": "train",
+          "kind": "block",
+          "cosine": null,
+          "lexical_rank": 5
+        }
+      ]
+    },
+    {
+      "query": "Where is the learning rate schedule constructed with warmup followed by cosine decay?",
+      "path": "tabnext/train.py",
+      "symbol": "build_scheduler",
+      "mode": "hybrid",
+      "file_hit_at_5": true,
+      "symbol_rank": 1,
+      "elapsed_ms": 4.28,
+      "round_trip_ms": 5.44,
+      "results": [
+        {
+          "path": "tabnext/train.py",
+          "symbol": "build_scheduler",
+          "kind": "function",
+          "cosine": 0.8135,
+          "lexical_rank": 2
+        },
+        {
+          "path": "tapnet/utils/experiment_utils.py",
+          "symbol": "get_lr_schedule",
+          "kind": "function",
+          "cosine": 0.7591,
+          "lexical_rank": 1
+        },
+        {
+          "path": "docs/training.md",
+          "symbol": "docs/training.md",
+          "kind": "block",
+          "cosine": 0.7434,
+          "lexical_rank": 4
+        },
+        {
+          "path": "tabnext/README.md",
+          "symbol": "tabnext/README.md",
+          "kind": "block",
+          "cosine": 0.7302,
+          "lexical_rank": 3
+        },
+        {
+          "path": "tapnet/utils/optimizers.py",
+          "symbol": "add_weight_decay.init_fn",
+          "kind": "function",
+          "cosine": 0.7457,
+          "lexical_rank": 42
+        }
+      ]
+    },
+    {
+      "query": "How are coordinates converted from corner boxes into center height width boxes?",
+      "path": "tabnext/utils/box_ops.py",
+      "symbol": "xyxy_to_cycxhw",
+      "mode": "semantic",
+      "file_hit_at_5": true,
+      "symbol_rank": 2,
+      "elapsed_ms": 43.67,
+      "round_trip_ms": 44.96,
+      "results": [
+        {
+          "path": "tabnext/utils/box_ops.py",
+          "symbol": "cycxhw_to_xyxy",
+          "kind": "function",
+          "cosine": 0.8139,
+          "lexical_rank": null
+        },
+        {
+          "path": "tabnext/utils/box_ops.py",
+          "symbol": "xyxy_to_cycxhw",
+          "kind": "function",
+          "cosine": 0.8105,
+          "lexical_rank": null
+        },
+        {
+          "path": "tapnet/utils/transforms.py",
+          "symbol": "convert_grid_coordinates",
+          "kind": "function",
+          "cosine": 0.773,
+          "lexical_rank": null
+        },
+        {
+          "path": "tabnext/utils/box_ops.py",
+          "symbol": "tabnext/utils/box_ops.py",
+          "kind": "block",
+          "cosine": 0.77,
+          "lexical_rank": null
+        },
+        {
+          "path": "tabnext/models/criterion.py",
+          "symbol": "box_loss",
+          "kind": "function",
+          "cosine": 0.7681,
+          "lexical_rank": null
+        }
+      ]
+    },
+    {
+      "query": "How are coordinates converted from corner boxes into center height width boxes?",
+      "path": "tabnext/utils/box_ops.py",
+      "symbol": "xyxy_to_cycxhw",
+      "mode": "lexical",
+      "file_hit_at_5": false,
+      "symbol_rank": null,
+      "elapsed_ms": 3.19,
+      "round_trip_ms": 4.36,
+      "results": [
+        {
+          "path": "exps/detector_prompt_noise.md",
+          "symbol": "exps/detector_prompt_noise.md",
+          "kind": "file",
+          "cosine": null,
+          "lexical_rank": 1
+        },
+        {
+          "path": "tapnet/utils/transforms.py",
+          "symbol": "convert_grid_coordinates",
+          "kind": "function",
+          "cosine": null,
+          "lexical_rank": 2
+        },
+        {
+          "path": "tabnext/models/deim.py",
+          "symbol": "FrozenDEIM.predict",
+          "kind": "function",
+          "cosine": null,
+          "lexical_rank": 4
+        },
+        {
+          "path": "tabnext/models/deim.py",
+          "symbol": "FrozenDEIM",
+          "kind": "class",
+          "cosine": null,
+          "lexical_rank": 5
+        },
+        {
+          "path": "tapnet/utils/transforms.py",
+          "symbol": "tapnet/utils/transforms.py",
+          "kind": "file",
+          "cosine": null,
+          "lexical_rank": 6
+        }
+      ]
+    },
+    {
+      "query": "How are coordinates converted from corner boxes into center height width boxes?",
+      "path": "tabnext/utils/box_ops.py",
+      "symbol": "xyxy_to_cycxhw",
+      "mode": "hybrid",
+      "file_hit_at_5": true,
+      "symbol_rank": null,
+      "elapsed_ms": 3.59,
+      "round_trip_ms": 4.69,
+      "results": [
+        {
+          "path": "tapnet/utils/transforms.py",
+          "symbol": "convert_grid_coordinates",
+          "kind": "function",
+          "cosine": 0.773,
+          "lexical_rank": 2
+        },
+        {
+          "path": "tapnet/utils/transforms.py",
+          "symbol": "tapnet/utils/transforms.py",
+          "kind": "file",
+          "cosine": 0.7636,
+          "lexical_rank": 6
+        },
+        {
+          "path": "docs/training.md",
+          "symbol": "docs/training.md",
+          "kind": "block",
+          "cosine": 0.7667,
+          "lexical_rank": 12
+        },
+        {
+          "path": "tabnext/utils/box_ops.py",
+          "symbol": "cycxhw_to_xyxy",
+          "kind": "function",
+          "cosine": 0.8139,
+          "lexical_rank": 25
+        },
+        {
+          "path": "tabnext/models/criterion.py",
+          "symbol": "tabnext/models/criterion.py",
+          "kind": "file",
+          "cosine": 0.7647,
+          "lexical_rank": 20
+        }
+      ]
+    },
+    {
+      "query": "Where are training checkpoints rejected if they are incompatible point tracker weights?",
+      "path": "tabnext/models/tabnext.py",
+      "symbol": "load_training_checkpoint",
+      "mode": "semantic",
+      "file_hit_at_5": true,
+      "symbol_rank": 1,
+      "elapsed_ms": 44.46,
+      "round_trip_ms": 45.8,
+      "results": [
+        {
+          "path": "tabnext/models/tabnext.py",
+          "symbol": "load_training_checkpoint",
+          "kind": "function",
+          "cosine": 0.8032,
+          "lexical_rank": null
+        },
+        {
+          "path": "tapnet/training/supervised_point_prediction.py",
+          "symbol": "SupervisedPointPrediction._infer_batch",
+          "kind": "block",
+          "cosine": 0.7898,
+          "lexical_rank": null
+        },
+        {
+          "path": "README.md",
+          "symbol": "README.md",
+          "kind": "block",
+          "cosine": 0.7755,
+          "lexical_rank": null
+        },
+        {
+          "path": "tapnet/utils/experiment_utils.py",
+          "symbol": "NumpyFileCheckpointer.__init__",
+          "kind": "function",
+          "cosine": 0.7744,
+          "lexical_rank": null
+        },
+        {
+          "path": "tapnet/tapnextpp/votsp2026/tracker.py",
+          "symbol": "tapnet/tapnextpp/votsp2026/tracker.py",
+          "kind": "file",
+          "cosine": 0.7691,
+          "lexical_rank": null
+        }
+      ]
+    },
+    {
+      "query": "Where are training checkpoints rejected if they are incompatible point tracker weights?",
+      "path": "tabnext/models/tabnext.py",
+      "symbol": "load_training_checkpoint",
+      "mode": "lexical",
+      "file_hit_at_5": false,
+      "symbol_rank": null,
+      "elapsed_ms": 3.64,
+      "round_trip_ms": 4.82,
+      "results": [
+        {
+          "path": "docs/model.md",
+          "symbol": "docs/model.md",
+          "kind": "block",
+          "cosine": null,
+          "lexical_rank": 1
+        },
+        {
+          "path": "tabnext/models/deim.py",
+          "symbol": "FrozenDEIM.__init__",
+          "kind": "function",
+          "cosine": null,
+          "lexical_rank": 2
+        },
+        {
+          "path": "scripts/README.md",
+          "symbol": "scripts/README.md",
+          "kind": "block",
+          "cosine": null,
+          "lexical_rank": 4
+        },
+        {
+          "path": "tabnext/models/deim.py",
+          "symbol": "FrozenDEIM",
+          "kind": "class",
+          "cosine": null,
+          "lexical_rank": 5
+        },
+        {
+          "path": "tabnext/README.md",
+          "symbol": "tabnext/README.md",
+          "kind": "block",
+          "cosine": null,
+          "lexical_rank": 6
+        }
+      ]
+    },
+    {
+      "query": "Where are training checkpoints rejected if they are incompatible point tracker weights?",
+      "path": "tabnext/models/tabnext.py",
+      "symbol": "load_training_checkpoint",
+      "mode": "hybrid",
+      "file_hit_at_5": true,
+      "symbol_rank": 1,
+      "elapsed_ms": 4.14,
+      "round_trip_ms": 5.26,
+      "results": [
+        {
+          "path": "tabnext/models/tabnext.py",
+          "symbol": "load_training_checkpoint",
+          "kind": "function",
+          "cosine": 0.8032,
+          "lexical_rank": 20
+        },
+        {
+          "path": "docs/training.md",
+          "symbol": "docs/training.md",
+          "kind": "block",
+          "cosine": 0.7472,
+          "lexical_rank": 9
+        },
+        {
+          "path": "exps/inference_tuning.md",
+          "symbol": "exps/inference_tuning.md",
+          "kind": "block",
+          "cosine": 0.7508,
+          "lexical_rank": 22
+        },
+        {
+          "path": "tapnet/tapnextpp/votsp2026/tracker.py",
+          "symbol": "tapnet/tapnextpp/votsp2026/tracker.py",
+          "kind": "block",
+          "cosine": 0.7522,
+          "lexical_rank": 28
+        },
+        {
+          "path": "scripts/README.md",
+          "symbol": "scripts/README.md",
+          "kind": "block",
+          "cosine": 0.7362,
+          "lexical_rank": 4
+        }
+      ]
+    },
+    {
+      "query": "Where is tracking run frame by frame and saved in MOT format?",
+      "path": "tabnext/submit_and_evaluate.py",
+      "symbol": "track_sequence",
+      "mode": "semantic",
+      "file_hit_at_5": true,
+      "symbol_rank": 1,
+      "elapsed_ms": 43.28,
+      "round_trip_ms": 44.66,
+      "results": [
+        {
+          "path": "tabnext/submit_and_evaluate.py",
+          "symbol": "track_sequence",
+          "kind": "function",
+          "cosine": 0.7855,
+          "lexical_rank": null
+        },
+        {
+          "path": "docs/data.md",
+          "symbol": "docs/data.md",
+          "kind": "file",
+          "cosine": 0.7852,
+          "lexical_rank": null
+        },
+        {
+          "path": "tabnext/data/dancetrack.py",
+          "symbol": "tabnext/data/dancetrack.py",
+          "kind": "file",
+          "cosine": 0.7787,
+          "lexical_rank": null
+        },
+        {
+          "path": "tapnet/tapnextpp/votsp2026/tracker.py",
+          "symbol": "tapnet/tapnextpp/votsp2026/tracker.py",
+          "kind": "file",
+          "cosine": 0.7725,
+          "lexical_rank": null
+        },
+        {
+          "path": "tapnet/trajan/track_autoencoder.py",
+          "symbol": "TrackAutoEncoderDecoderContext",
+          "kind": "class",
+          "cosine": 0.7709,
+          "lexical_rank": null
+        }
+      ]
+    },
+    {
+      "query": "Where is tracking run frame by frame and saved in MOT format?",
+      "path": "tabnext/submit_and_evaluate.py",
+      "symbol": "track_sequence",
+      "mode": "lexical",
+      "file_hit_at_5": true,
+      "symbol_rank": null,
+      "elapsed_ms": 4.04,
+      "round_trip_ms": 5.39,
+      "results": [
+        {
+          "path": "docs/README.md",
+          "symbol": "docs/README.md",
+          "kind": "file",
+          "cosine": null,
+          "lexical_rank": 1
+        },
+        {
+          "path": "tabnext/submit_and_evaluate.py",
+          "symbol": "tabnext/submit_and_evaluate.py",
+          "kind": "block",
+          "cosine": null,
+          "lexical_rank": 3
+        },
+        {
+          "path": "tabnext/submit_and_evaluate.py",
+          "symbol": "submit_and_evaluate",
+          "kind": "function",
+          "cosine": null,
+          "lexical_rank": 4
+        },
+        {
+          "path": "scripts/README.md",
+          "symbol": "scripts/README.md",
+          "kind": "file",
+          "cosine": null,
+          "lexical_rank": 5
+        },
+        {
+          "path": "tapnet/tapvid3d/README.md",
+          "symbol": "tapnet/tapvid3d/README.md",
+          "kind": "block",
+          "cosine": null,
+          "lexical_rank": 6
+        }
+      ]
+    },
+    {
+      "query": "Where is tracking run frame by frame and saved in MOT format?",
+      "path": "tabnext/submit_and_evaluate.py",
+      "symbol": "track_sequence",
+      "mode": "hybrid",
+      "file_hit_at_5": true,
+      "symbol_rank": null,
+      "elapsed_ms": 4.71,
+      "round_trip_ms": 6.02,
+      "results": [
+        {
+          "path": "tabnext/submit_and_evaluate.py",
+          "symbol": "tabnext/submit_and_evaluate.py",
+          "kind": "block",
+          "cosine": 0.7559,
+          "lexical_rank": 3
+        },
+        {
+          "path": "tabnext/data/dancetrack.py",
+          "symbol": "tabnext/data/dancetrack.py",
+          "kind": "block",
+          "cosine": 0.7594,
+          "lexical_rank": 10
+        },
+        {
+          "path": "docs/data.md",
+          "symbol": "docs/data.md",
+          "kind": "file",
+          "cosine": 0.7852,
+          "lexical_rank": 36
+        },
+        {
+          "path": "docs/README.md",
+          "symbol": "docs/README.md",
+          "kind": "file",
+          "cosine": 0.7428,
+          "lexical_rank": 1
+        },
+        {
+          "path": "tapnet/tapnextpp/votsp2026/tracker.py",
+          "symbol": "main",
+          "kind": "function",
+          "cosine": 0.7661,
+          "lexical_rank": 39
+        }
+      ]
+    },
+    {
+      "query": "Where is prompt timing augmentation implemented by delaying prompts within a training clip?",
+      "path": "tabnext/data/transforms.py",
+      "symbol": "ClipAugmentation._delay_prompts",
+      "mode": "semantic",
+      "file_hit_at_5": true,
+      "symbol_rank": 1,
+      "elapsed_ms": 45.11,
+      "round_trip_ms": 46.55,
+      "results": [
+        {
+          "path": "tabnext/data/transforms.py",
+          "symbol": "ClipAugmentation._delay_prompts",
+          "kind": "function",
+          "cosine": 0.8325,
+          "lexical_rank": null
+        },
+        {
+          "path": "docs/training.md",
+          "symbol": "docs/training.md",
+          "kind": "block",
+          "cosine": 0.8178,
+          "lexical_rank": null
+        },
+        {
+          "path": "tabnext/data/transforms.py",
+          "symbol": "ClipAugmentation.__call__",
+          "kind": "function",
+          "cosine": 0.8049,
+          "lexical_rank": null
+        },
+        {
+          "path": "tabnext/data/transforms.py",
+          "symbol": "ClipAugmentation._place_prompts",
+          "kind": "function",
+          "cosine": 0.8027,
+          "lexical_rank": null
+        },
+        {
+          "path": "exps/reprompt_augmentation.md",
+          "symbol": "exps/reprompt_augmentation.md",
+          "kind": "file",
+          "cosine": 0.7894,
+          "lexical_rank": null
+        }
+      ]
+    },
+    {
+      "query": "Where is prompt timing augmentation implemented by delaying prompts within a training clip?",
+      "path": "tabnext/data/transforms.py",
+      "symbol": "ClipAugmentation._delay_prompts",
+      "mode": "lexical",
+      "file_hit_at_5": true,
+      "symbol_rank": 1,
+      "elapsed_ms": 3.67,
+      "round_trip_ms": 4.93,
+      "results": [
+        {
+          "path": "tabnext/data/transforms.py",
+          "symbol": "ClipAugmentation._delay_prompts",
+          "kind": "function",
+          "cosine": null,
+          "lexical_rank": 1
+        },
+        {
+          "path": "docs/training.md",
+          "symbol": "docs/training.md",
+          "kind": "block",
+          "cosine": null,
+          "lexical_rank": 2
+        },
+        {
+          "path": "tabnext/data/transforms.py",
+          "symbol": "ClipAugmentation.__call__",
+          "kind": "function",
+          "cosine": null,
+          "lexical_rank": 3
+        },
+        {
+          "path": "docs/training.md",
+          "symbol": "docs/training.md",
+          "kind": "block",
+          "cosine": null,
+          "lexical_rank": 4
+        },
+        {
+          "path": "tabnext/data/dataset.py",
+          "symbol": "BoxBatch",
+          "kind": "class",
+          "cosine": null,
+          "lexical_rank": 5
+        }
+      ]
+    },
+    {
+      "query": "Where is prompt timing augmentation implemented by delaying prompts within a training clip?",
+      "path": "tabnext/data/transforms.py",
+      "symbol": "ClipAugmentation._delay_prompts",
+      "mode": "hybrid",
+      "file_hit_at_5": true,
+      "symbol_rank": 1,
+      "elapsed_ms": 3.48,
+      "round_trip_ms": 4.63,
+      "results": [
+        {
+          "path": "tabnext/data/transforms.py",
+          "symbol": "ClipAugmentation._delay_prompts",
+          "kind": "function",
+          "cosine": 0.8325,
+          "lexical_rank": 1
+        },
+        {
+          "path": "docs/training.md",
+          "symbol": "docs/training.md",
+          "kind": "block",
+          "cosine": 0.8178,
+          "lexical_rank": 2
+        },
+        {
+          "path": "tabnext/data/transforms.py",
+          "symbol": "ClipAugmentation.__call__",
+          "kind": "function",
+          "cosine": 0.8049,
+          "lexical_rank": 3
+        },
+        {
+          "path": "tabnext/data/transforms.py",
+          "symbol": "ClipAugmentation._place_prompts",
+          "kind": "function",
+          "cosine": 0.8027,
+          "lexical_rank": 9
+        },
+        {
+          "path": "docs/training.md",
+          "symbol": "docs/training.md",
+          "kind": "file",
+          "cosine": 0.7793,
+          "lexical_rank": 6
+        }
+      ]
+    }
+  ]
+}

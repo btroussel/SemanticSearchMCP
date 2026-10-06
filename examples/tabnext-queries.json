@@ -1,0 +1,14 @@
+[
+  {"query": "Where are high confidence detections associated first and low confidence detections used in a second pass?", "path": "tabnext/models/tracker.py", "symbol": "TABNextTracker._update_tracks"},
+  {"query": "Where is the Hungarian assignment solved with an unmatched cost?", "path": "tabnext/models/tracker.py", "symbol": "TABNextTracker._match"},
+  {"query": "How are new object slots added with empty recurrent memory while preserving the existing image caches?", "path": "tabnext/models/tabnext.py", "symbol": "TABNextState.append_queries"},
+  {"query": "Where do we reorder or remove object slots without discarding image memory?", "path": "tabnext/models/tabnext.py", "symbol": "TABNextState.select_queries"},
+  {"query": "Where are bounding box center and logarithmic size predictions supervised with Huber and generalized IoU losses?", "path": "tabnext/models/criterion.py", "symbol": "box_loss"},
+  {"query": "Where is the visibility prediction loss computed only for supervised object slots?", "path": "tabnext/models/criterion.py", "symbol": "visibility_loss"},
+  {"query": "Where are cached detector outputs loaded for an entire video sequence?", "path": "tabnext/data/cache.py", "symbol": "DetectionCache.load_sequence"},
+  {"query": "Where is the learning rate schedule constructed with warmup followed by cosine decay?", "path": "tabnext/train.py", "symbol": "build_scheduler"},
+  {"query": "How are coordinates converted from corner boxes into center height width boxes?", "path": "tabnext/utils/box_ops.py", "symbol": "xyxy_to_cycxhw"},
+  {"query": "Where are training checkpoints rejected if they are incompatible point tracker weights?", "path": "tabnext/models/tabnext.py", "symbol": "load_training_checkpoint"},
+  {"query": "Where is tracking run frame by frame and saved in MOT format?", "path": "tabnext/submit_and_evaluate.py", "symbol": "track_sequence"},
+  {"query": "Where is prompt timing augmentation implemented by delaying prompts within a training clip?", "path": "tabnext/data/transforms.py", "symbol": "ClipAugmentation._delay_prompts"}
+]

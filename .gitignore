@@ -1,0 +1,8 @@
+.DS_Store
+.venv/
+__pycache__/
+.pytest_cache/
+.code-search/
+models/
+*.egg-info/
+macos/.build/
