@@ -33,3 +33,7 @@ Start with the [documentation index](docs/README.md). Detailed behavior, command
 | Tests, smoke checks and measured results | [Validation](docs/validation.md) |
 
 Coding agents should read [AGENTS.md](AGENTS.md). Guidance for assistants working in indexed projects is in [docs/agent-instructions.md](docs/agent-instructions.md).
+
+## License
+
+[Apache-2.0](LICENSE). The EmbeddingGemma 2 checkpoint is downloaded separately and is also distributed under Apache-2.0.
