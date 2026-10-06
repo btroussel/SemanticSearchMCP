@@ -1,6 +1,8 @@
 import hashlib
 import time
 import threading
+from pathlib import Path
+
 import pytest
 
 import numpy as np
@@ -150,6 +152,22 @@ def test_general_mcp_has_image_and_source_tools_but_no_folder_authorization(tmp_
     names = {t.name for t in asyncio.run(server.list_tools())}
     assert {"list_sources", "search_local", "search_code", "read_image", "read_symbol"} <= names
     assert "add_source" not in names and "remove_source" not in names
+    # list_sources reports readiness, so general mode has no separate index_status tool.
+    assert "index_status" not in names
+
+
+def test_mcp_schemas_expose_service_bounds_and_hide_source_id_in_single_repository_mode():
+    import asyncio
+    general = {t.name: t.inputSchema["properties"] for t in asyncio.run(
+        create_server("http://127.0.0.1:8766", general=True, project=Path.cwd()).list_tools())}
+    assert general["search_local"]["mode"]["enum"] == ["auto", "hybrid", "semantic", "lexical"]
+    assert general["search_local"]["asset_kind"]["enum"] == ["", "code", "documents", "images"]
+    assert general["search_code"]["response_format"]["enum"] == ["concise", "detailed"]
+    assert (general["search_code"]["limit"]["minimum"], general["search_code"]["limit"]["maximum"]) == (1, 30)
+    assert general["read_code_file"]["max_lines"]["maximum"] == 300
+    single = {t.name: t.inputSchema["properties"] for t in asyncio.run(create_server("http://127.0.0.1:8765").list_tools())}
+    assert set(single) == {"search_code", "read_symbol", "read_code_file", "index_status", "refresh_index"}
+    assert all("source_id" not in properties for properties in single.values())
 
 
 def test_revocation_during_embedding_prevents_publication_and_cleans_cache(tmp_path):

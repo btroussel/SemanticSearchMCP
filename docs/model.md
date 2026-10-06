@@ -19,7 +19,7 @@ All options are saved in private `settings.json` and survive restarts. Saving an
 
 Long text blocks are further split with the local tokenizer when needed, including single-line documents, so their remaining text is indexed instead of discarded. Image inputs are not truncated to the configured text limit. Audio/video, classification, and clustering workflows are not exposed by this search app.
 
-The [settings API](mcp.md#settings-api) exposes the same options to the native app. MCP assistants can inspect options through `index_status` but cannot change them. `--text-only` remains a hard service restriction. Old settings containing only `max_tokens` remain compatible.
+The [settings API](mcp.md#settings-api) exposes the same options to the native app. MCP assistants can inspect options through `list_sources` but cannot change them. `--text-only` remains a hard service restriction. Old settings containing only `max_tokens` remain compatible.
 
 BF16 text/image inference, all vector dimensions and image budgets, retrieval prefixes, live rebuilds, and text-only model reload are covered by the disposable [real-model smoke check](workspace-smoke.json). These checks establish functionality on this Mac, not representative speed or retrieval-quality gains.
 

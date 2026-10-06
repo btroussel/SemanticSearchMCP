@@ -4,11 +4,32 @@ A native macOS app and local MCP service for searching user-authorized code, doc
 
 ## Install
 
-Requires a Mac with Apple Silicon and macOS 14 or newer.
+Requires a Mac with Apple Silicon and macOS 14 or newer. To let Claude Code or Codex do it for you, paste:
+
+```text
+Install Local Search by following the Install section of https://github.com/btroussel/SemanticSearchMCP#install, then connect it to yourself as an MCP server. Ask me whenever a step needs me in macOS or in the app.
+```
 
 1. Download `Local-Search-<version>.dmg` from the [latest release](https://github.com/btroussel/SemanticSearchMCP/releases/latest) and drag **Local Search** to Applications.
 2. Open it. The app is not notarized by Apple yet, so macOS blocks the first launch: open **System Settings → Privacy & Security** and choose **Open Anyway**.
 3. Click **Install**. The app downloads its search engine (Python 3.12 and libraries, about 1.4 GB) and the [EmbeddingGemma 2 model](https://huggingface.co/google/embeddinggemma-2) (1.5 GB) once. If you already have the model, choose **Use a folder I already have…** instead of downloading it again.
+4. Connect an assistant once setup is finished, then start a new assistant session:
+
+   ```sh
+   # Claude Code
+   claude mcp add --scope user --transport stdio local-search -- \
+     "$HOME/Library/Application Support/Local Search/runtime/venv/bin/code-search" mcp --general \
+     --url http://127.0.0.1:8766 \
+     --token-file "$HOME/Library/Application Support/Local Search/access.key"
+
+   # Codex
+   codex mcp add local-search -- \
+     "$HOME/Library/Application Support/Local Search/runtime/venv/bin/code-search" mcp --general \
+     --url http://127.0.0.1:8766 \
+     --token-file "$HOME/Library/Application Support/Local Search/access.key"
+   ```
+
+5. Choose the folders to index in the app. Assistants cannot authorize folders themselves; see [MCP and project access](docs/mcp.md).
 
 After setup, indexing and search run offline. Everything the app installs or stores lives in `~/Library/Application Support/Local Search/`; to uninstall, delete the app and that folder.
 

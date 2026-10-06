@@ -22,20 +22,21 @@ Start a fresh assistant session and check `/mcp`. Official references: [Codex MC
 
 | Tool | Purpose |
 | --- | --- |
-| `list_sources` | Authorized folders, IDs, types, exclusions, indexing status |
+| `list_sources` | Accessible folders, IDs, allowed prefixes, indexing status, model readiness and options |
 | `search_local` | Search code, documents, and images; optionally across sources |
 | `search_code` | Search implementations in an authorized source |
-| `read_symbol` | Read a function/class or expand its parent |
+| `read_symbol` | Read a result by `id`, or expand to its enclosing class/file by `parent_id` |
 | `read_code_file` | Read current source or extracted document text |
 | `read_image` | Inspect an authorized image preview |
-| `index_status` | Service/model/source status |
 | `refresh_index` | Queue incremental indexing |
+
+Search tools return a concise result by default: paths, lines, symbol and parent IDs, `source_id`, bounded code, and `duplicates` only when copies exist. Pass `response_format: "detailed"` to add ranking scores, `content_id`, and source names/paths. The tool schemas list the accepted `mode`/`asset_kind` values and the `limit`, `max_chars` and `max_lines` bounds. Service errors reach the assistant as the service's own message.
 
 The MCP defaults to **the project folder only**. The bridge binds to its launch directory, or the explicit `mcp --general --project /absolute/project` option. `list_sources` reports that project and the allowed path prefixes within each accessible index. Verify the reported project: clients that launch MCP from another directory should use `--project`. The project must already be covered by an indexing source in the app; otherwise MCP searches return no results.
 
 In **Connect an assistant → Project access**, choose the project, add extra folders (or subfolders of existing sources), and choose **Save permissions**. Grants persist for that project only. Remove a folder and save to revoke its MCP access immediately. Removing an indexing source also removes its additional-folder grants. Adding a folder for indexing does not grant every assistant access to it.
 
-An omitted `source_id` searches only the project, even after extra folders are granted. To search an extra folder, pass its `source_id` from `list_sources` and optionally a relative `path_filter`. The backend enforces the allowed prefixes for searches, file reads, symbol expansion and image previews; passing a different source ID cannot bypass them. An explicit source may contain both project and granted subfolder scopes. File paths and filters remain relative to the indexing source, e.g. `my-project/` when the source is `~/Code`.
+An omitted `source_id` searches only the project, even after extra folders are granted. File, symbol and image reads without a `source_id` use the indexing source containing the project; if the project spans several sources, pass the `source_id` from the result. To search an extra folder, pass its `source_id` from `list_sources` and optionally a relative `path_filter`. The backend enforces the allowed prefixes for searches, file reads, symbol expansion and image previews; passing a different source ID cannot bypass them. An explicit source may contain both project and granted subfolder scopes. File paths and filters remain relative to the indexing source, e.g. `my-project/` when the source is `~/Code`.
 
 The app's own search still covers its authorized indexing sources. Folder authorization and MCP grants are absent from agent tools; manage them in the app. These controls govern this MCP's tools, not an assistant's separate terminal or filesystem tools. Each result includes `source_id`; source-specific reads require that ID. Add the [agent guidance](agent-instructions.md) to your `AGENTS.md` or `CLAUDE.md` for more consistent use. After upgrading, restart the app/service and open fresh assistant sessions; new bridges reject older services that cannot enforce project scope.
 
@@ -61,11 +62,11 @@ All endpoints require the private bearer key, including status, settings, images
 
 MCP requests carry `X-Local-Search-Project` as a local file URI. The backend enforces project scope and returns `X-Local-Search-Scoped: 1`; the bridge rejects older services without that marker. Project-scoped requests cannot call source, settings or grant-management endpoints. Folder authorization and grants are app actions, not MCP tools.
 
-Search accepts `query`, `source_id`, `asset_kind`, `limit`, `path_filter`, `mode`, and `max_chars`. `asset_kind` is `code`, `documents`, `images`, or empty. Modes are `auto`, `semantic`, `lexical`, and `hybrid`. Paths and filters remain relative to the source. Results include `source_id`, bounded snippets, ranking information and paths; the general response also reports `issues`, `stale_paths`, and `elapsed_ms`. See [architecture](architecture.md) for ranking and fallback behavior.
+Search accepts `query`, `source_id`, `asset_kind`, `limit`, `path_filter`, `mode`, and `max_chars`. `asset_kind` is `code`, `documents`, `images`, or empty. Modes are `auto`, `semantic`, `lexical`, and `hybrid`. Paths and filters remain relative to the source. Results include `source_id`, bounded snippets, ranking information and paths. Identical copies of a file, in the same or another accessible source, share one result: `duplicates` lists up to ten other copies as `source_id`/`path` pairs, `duplicates_omitted` counts unlisted copies, and `content_id` is equal for identical content. Single-repository results list only `path`; the general response also reports `issues`, `stale_paths`, and `elapsed_ms`. See [architecture](architecture.md) for ranking and fallback behavior.
 
 ## Settings API
 
-The authenticated `GET /settings` returns these fields: `max_tokens`, `dimensions`, `precision`, `images`, `image_tokens`, `query_task`, and the read-only `image_encoder_available` capability. `PUT /settings` accepts a partial update of the six editable fields and returns the effective options plus `reindex_queued`; omitted fields keep their current values. Unknown or invalid fields are rejected. MCP `index_status` reports the options, but assistants cannot change them through MCP. `--text-only` remains a hard service restriction and cannot be overridden by saved settings or the app. Old settings containing only `max_tokens` remain compatible.
+The authenticated `GET /settings` returns these fields: `max_tokens`, `dimensions`, `precision`, `images`, `image_tokens`, `query_task`, and the read-only `image_encoder_available` capability. `PUT /settings` accepts a partial update of the six editable fields and returns the effective options plus `reindex_queued`; omitted fields keep their current values. Unknown or invalid fields are rejected. MCP `list_sources` reports the options, but assistants cannot change them through MCP. `--text-only` remains a hard service restriction and cannot be overridden by saved settings or the app. Old settings containing only `max_tokens` remain compatible.
 
 Editable field names and values correspond to the [model settings table](model.md). The partial update preserves omitted fields; supplying a capability or an unknown option is rejected. Precision, dimensions, text limits, and active image encoding/detail changes invalidate document vectors. Query-task changes invalidate only query embeddings.
 
@@ -111,6 +112,8 @@ claude mcp remove --scope local repo-code-search
 | `read_code_file` | `GET /file?path=...&start_line=1` | Read bounded current source |
 | `index_status` | `GET /status` | Counts, repository, readiness, device, last update |
 | `refresh_index` | `POST /reindex` | Queue an incremental rescan |
+
+These tools take no `source_id`. `search_code` accepts the same concise/detailed `response_format` as the general bridge; the HTTP API always returns the detailed form.
 
 ```sh
 curl -s http://127.0.0.1:8765/search \

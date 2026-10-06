@@ -25,7 +25,7 @@ async def check_mcp(url, state, source, project):
         async with ClientSession(reader, writer) as session:
             await session.initialize()
             tools = await session.list_tools()
-            assert len(tools.tools) == 8
+            assert len(tools.tools) == 7
             listed = await session.call_tool("list_sources", {})
             assert listed.structuredContent["sources"][0]["id"] == source
             found = await session.call_tool("search_code", {"query": "authenticate_user", "source_id": source, "mode": "lexical"})
@@ -34,7 +34,7 @@ async def check_mcp(url, state, source, project):
             assert not picture.isError and any(c.type == "image" for c in picture.content)
             outside = await session.call_tool("read_code_file", {"source_id": source, "path": "../outside.txt"})
             assert outside.isError
-    return ["8 tools", "structured search", "image pixels", "path boundary"]
+    return ["7 tools","structured search", "image pixels", "path boundary"]
 
 
 def main():

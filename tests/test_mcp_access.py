@@ -161,6 +161,78 @@ def test_mcp_bridge_binds_launch_project_and_rejects_old_unscoped_service(scoped
         asyncio.run(old.call_tool("list_sources", {}))
 
 
+def test_reads_without_source_id_default_to_the_project_source(scoped):
+    workspace, client, project, sibling, papers, source, extra, app_headers, headers = scoped
+    # Two sources are authorized, but only one contains the project.
+    reply = client.get("/file", headers=headers, params={"path": "project/auth.py"})
+    assert reply.status_code == 200 and "authenticate_user" in reply.json()["code"]
+    row = workspace.index(source["id"]).db.execute("SELECT id FROM chunks WHERE path='project/auth.py' LIMIT 1").fetchone()
+    assert client.get(f"/symbol/{row[0]}", headers=headers).status_code == 200
+    assert client.get("/image", headers=headers, params={"path": "project/image.png"}).status_code == 200
+    # The default never widens scope: sibling paths and granted folders still need their own checks.
+    assert "outside this MCP project" in client.get("/file", headers=headers, params={"path": "project-other/auth.py"}).text
+    grant = {"project": str(project), "folders": [str(papers)]}
+    assert client.put("/mcp-access", headers=app_headers, json=grant).status_code == 200
+    assert client.get("/file", headers=headers, params={"path": "project/auth.py"}).status_code == 200
+    assert client.get("/file", headers=headers, params={"path": "auth.py"}).status_code == 400
+
+
+def test_reads_without_source_id_ask_for_one_when_project_spans_sources(tmp_path):
+    workspace = Workspace(tmp_path / "state", AccessEmbedder(), watch=False)
+    project = tmp_path / "project"
+    for name in ("backend", "frontend"):
+        (project / name).mkdir(parents=True)
+        (project / name / "auth.py").write_text("def authenticate_user():\n    return True\n")
+        workspace.add(SourceRequest(path=str(project / name)))
+    unindexed = tmp_path / "unindexed"; unindexed.mkdir()
+    client = TestClient(create_app(workspace))
+    headers = {"Authorization": f"Bearer {workspace.token}"}
+    try:
+        spanning = client.get("/file", params={"path": "auth.py"}, headers={**headers, "X-Local-Search-Project": project.as_uri()})
+        assert spanning.status_code == 400 and "pass the result's source_id" in spanning.json()["detail"]
+        missing = client.get("/file", params={"path": "auth.py"}, headers={**headers, "X-Local-Search-Project": unindexed.as_uri()})
+        assert missing.status_code == 400 and "not inside an indexed folder" in missing.json()["detail"]
+    finally:
+        client.close()
+        for entry in workspace.sources.values():
+            entry["worker"].index.db.close()
+
+
+def test_bridge_responses_are_concise_by_default_and_errors_are_actionable(scoped, monkeypatch):
+    workspace, client, project, sibling, papers, source, extra, app_headers, headers = scoped
+    monkeypatch.setattr("semantic_search.mcp_server.httpx.Client", lambda **kwargs: client)
+    server = create_server("http://127.0.0.1:8766", workspace.state / "access.key", general=True, project=project)
+
+    async def exercise():
+        listed = (await server.call_tool("list_sources", {}))[1]
+        assert listed["project"] == str(project) and listed["model_loaded"] is True
+        assert listed["sources"][0]["phase"] and listed["sources"][0]["allowed_paths"]
+        query = {"query": "authenticate_user", "mode": "lexical"}
+        compact = (await server.call_tool("search_code", query))[1]
+        assert compact["mode"] == "lexical" and "elapsed_ms" not in compact and "issues" not in compact
+        result = compact["results"][0]
+        assert {"id", "parent_id", "source_id", "path", "start_line", "code"} <= set(result)
+        assert not {"score", "cosine", "lexical_rank", "content_id", "source_path", "source_name"} & set(result)
+        detailed = (await server.call_tool("search_code", {**query, "response_format": "detailed"}))[1]
+        assert {"cosine", "lexical_rank", "content_id", "source_path"} <= set(detailed["results"][0])
+        assert (await server.call_tool("read_symbol", {"symbol_id": result["parent_id"]}))[1]["path"] == "project/auth.py"
+        # Service messages reach the agent without HTTP status or JSON wrapping.
+        with pytest.raises(Exception) as denied:
+            await server.call_tool("read_code_file", {"path": "project-other/auth.py"})
+        assert str(denied.value).endswith("Folder is outside this MCP project. Grant access in the app's assistant settings")
+    asyncio.run(exercise())
+
+    class Offline:
+        def request(self, *args, **kwargs):
+            raise httpx.ConnectError("refused")
+    monkeypatch.setattr("semantic_search.mcp_server.httpx.Client", lambda **kwargs: Offline())
+    offline = create_server("http://127.0.0.1:8766", general=True, project=project)
+    with pytest.raises(Exception, match="Open the Local Search Mac app"):
+        asyncio.run(offline.call_tool("read_image", {"path": "project/image.png"}))
+    with pytest.raises(Exception, match="Start `code-search serve`"):
+        asyncio.run(create_server("http://127.0.0.1:8765").call_tool("index_status", {}))
+
+
 def test_stdio_session_uses_project_and_observes_live_grants(scoped):
     import uvicorn
     from mcp import ClientSession, StdioServerParameters
@@ -187,7 +259,7 @@ def test_stdio_session_uses_project_and_observes_live_grants(scoped):
             async with ClientSession(reader, writer) as session:
                 await session.initialize()
                 tools = await session.list_tools()
-                assert len(tools.tools) == 8
+                assert len(tools.tools) == 7
                 assert all("project" not in t.inputSchema["properties"] for t in tools.tools)
                 listed = await session.call_tool("list_sources", {})
                 assert listed.structuredContent["project"] == str(project)

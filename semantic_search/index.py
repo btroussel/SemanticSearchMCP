@@ -368,7 +368,7 @@ class Index:
             expected = self.db.execute("SELECT hash FROM files WHERE path=?", (row["path"],)).fetchone()[0]
         source = self.repo.read(row["path"])
         if self.repo.fingerprint(row["path"], source) != expected:
-            raise ValueError("Source changed since indexing. Use read_file or search again after the update.")
+            raise ValueError("Source changed since indexing. Use read_code_file for current text, or search again after the index updates.")
         lines = source.splitlines()
         end = min(row["end"], row["start"] + 299)
         code = "\n".join(row["text"].splitlines()[:300]) if row["kind"] == "block" else "\n".join(lines[row["start"] - 1:end])

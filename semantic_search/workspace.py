@@ -222,6 +222,17 @@ class Workspace:
     def scopes(self, project: Path, additional=True):
         return self.access.scopes(project, [e["config"] for e in self.sources.values()], additional)
 
+    def resolve(self, project: Path | None, source_id: str):
+        """MCP reads without a source_id default to the source containing the project."""
+        if source_id or project is None:
+            return source_id
+        candidates = list(self.scopes(project, additional=False))
+        if not candidates:
+            raise ValueError("This project is not inside an indexed folder. Add it as a source in the Mac app")
+        if len(candidates) > 1:
+            raise ValueError("This project spans several sources; pass the result's source_id from search or list_sources")
+        return candidates[0]
+
     def check_path(self, project: Path | None, source_id: str, path: str):
         if project is None:
             return
@@ -422,14 +433,16 @@ def create_workspace_app(workspace: Workspace):
         return workspace.search(request, http.state.project)
 
     @app.get("/file")
-    def read_file(http: Request, source_id: str, path: str, start_line: int = 1, max_lines: int = 120):
+    def read_file(http: Request, path: str, source_id: str = "", start_line: int = 1, max_lines: int = 120):
         with workspace.lock:
+            source_id = workspace.resolve(http.state.project, source_id)
             workspace.check_path(http.state.project, source_id, path)
             return workspace.index(source_id).read_file(path, start_line, max_lines)
 
     @app.get("/symbol/{identifier}")
-    def read_symbol(http: Request, identifier: str, source_id: str):
+    def read_symbol(http: Request, identifier: str, source_id: str = ""):
         with workspace.lock:
+            source_id = workspace.resolve(http.state.project, source_id)
             index = workspace.index(source_id)
             with index.lock:
                 row = index.db.execute("SELECT path FROM chunks WHERE id=?", (identifier,)).fetchone()
@@ -439,8 +452,9 @@ def create_workspace_app(workspace: Workspace):
             return index.read_symbol(identifier)
 
     @app.get("/image")
-    def image(http: Request, source_id: str, path: str):
+    def image(http: Request, path: str, source_id: str = ""):
         with workspace.lock:
+            source_id = workspace.resolve(http.state.project, source_id)
             workspace.check_path(http.state.project, source_id, path)
             return Response(workspace.thumbnail(source_id, path), media_type="image/png", headers={"Cache-Control": "no-store"})
 
