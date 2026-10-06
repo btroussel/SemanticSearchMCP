@@ -8,11 +8,14 @@ struct Source: Decodable, Identifiable {
     let files, chunks: Int
     let error: String?
     let last_sync: SyncStats?
+    let last_success: Double?
+    var skippedCount: Int { last_sync?.skipped_files?.count ?? 0 }
+    var indexedAt: Date? { (last_sync?.completed_at ?? last_success).map { Date(timeIntervalSince1970: $0) } }
     var phaseLabel: String {
         switch phase { case "ready": return L10n.string("phase.ready"); case "indexing": return L10n.string("phase.indexing"); case "error": return L10n.string("phase.error"); default: return L10n.string("phase.starting") }
     }
 }
-struct SyncStats: Decodable { let skipped_files: [SkippedFile]? }
+struct SyncStats: Decodable { let skipped_files: [SkippedFile]?; let completed_at: Double? }
 struct SkippedFile: Decodable { let path, error: String }
 struct ServiceStatus: Decodable {
     let sources: [Source]
@@ -29,12 +32,35 @@ struct Hit: Decodable, Identifiable, Hashable {
     let parent_id: String?
     let duplicates: [Duplicate]?
     let duplicates_omitted: Int?
+    let content_id: String?
     let rawID: String
     var id: String { source_id + ":" + rawID }
     var url: URL { URL(fileURLWithPath: source_path).appendingPathComponent(path) }
     var copyCount: Int { (duplicates?.count ?? 0) + (duplicates_omitted ?? 0) }
+    var isImage: Bool { asset_kind == "images" }
+    /// Changes when the file content changes, so cached thumbnails never go stale.
+    var imageKey: String { [source_id, path, content_id ?? ""].joined(separator: "\u{0}") }
+    var title: String { symbol == path ? url.lastPathComponent : symbol }
+    var icon: String { isImage ? "photo" : asset_kind == "code" ? "chevron.left.forwardslash.chevron.right" : "doc.text" }
+    /// First lines of a code result, without their shared indentation.
+    func excerpt(lines count: Int) -> [String] {
+        var lines = code.components(separatedBy: "\n").map { $0.replacingOccurrences(of: "\t", with: "    ") }
+        while lines.first?.trimmingCharacters(in: .whitespaces).isEmpty == true { lines.removeFirst() }
+        lines = Array(lines.prefix(count))
+        let indent = lines.filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }.map { $0.prefix { $0 == " " }.count }.min() ?? 0
+        return lines.map { String($0.dropFirst(min(indent, $0.prefix { $0 == " " }.count))) }
+    }
+    /// Document text as one flowing paragraph, without Markdown heading, quote and list marks.
+    var prose: String {
+        code.split(whereSeparator: \.isNewline).map { line -> String in
+            var text = line.trimmingCharacters(in: .whitespaces).trimmingCharacters(in: CharacterSet(charactersIn: "#>")).trimmingCharacters(in: .whitespaces)
+            if text.hasPrefix("- ") || text.hasPrefix("* ") { text.removeFirst(2) }
+            return text
+        }.filter { !$0.isEmpty }.joined(separator: " · ")
+    }
+    var snippet: String { code.split(separator: "\n").lazy.map { $0.trimmingCharacters(in: .whitespaces) }.first { !$0.isEmpty && !$0.hasPrefix("#!") } ?? "" }
     enum CodingKeys: String, CodingKey {
-        case source_id, source_name, source_path, path, symbol, kind, asset_kind, code, start_line, end_line, cosine, line_origin, parent_id, duplicates, duplicates_omitted
+        case source_id, source_name, source_path, path, symbol, kind, asset_kind, code, start_line, end_line, cosine, line_origin, parent_id, duplicates, duplicates_omitted, content_id
         case rawID = "id"
     }
 }
@@ -47,7 +73,7 @@ struct SearchReply: Decodable {
 }
 struct SearchIssue: Decodable { let source_id, error: String }
 struct StalePath: Decodable { let source_id, path: String }
-struct FileReply: Decodable { let code: String }
+struct FileReply: Decodable { let code: String; let start_line, end_line, total_lines: Int? }
 struct ModelOptions: Decodable, Equatable {
     var max_tokens = 4096
     var dimensions = 768
@@ -68,12 +94,15 @@ final class SearchStore: ObservableObject {
     static let shared = SearchStore()
     @Published var status: ServiceStatus?
     @Published var query = ""
-    @Published var sourceID = ""
-    @Published var assetKind = ""
+    // Changing the scope or type reruns the current search so visible results always match the filters.
+    @Published var sourceID = "" { didSet { if sourceID != oldValue { filtersChanged() } } }
+    @Published var assetKind = "" { didSet { if assetKind != oldValue { filtersChanged() } } }
     @Published var results: [Hit] = []
     @Published var selected: String?
     @Published var busy = false
     @Published var error: String?
+    /// nil until the first status check; false while the engine does not answer.
+    @Published var connected: Bool?
     @Published var latency: Double?
     @Published var showConnections = false
     @Published var addingPath: URL?
@@ -86,6 +115,7 @@ final class SearchStore: ObservableObject {
     var setupProcess: Process?
     var setupCancelled = false
     var timer: Timer?
+    var searchGeneration = 0
     // LOCAL_SEARCH_STATE and LOCAL_SEARCH_PORT isolate experiments from the live state and service.
     let state = URL(fileURLWithPath: ProcessInfo.processInfo.environment["LOCAL_SEARCH_STATE"]
         ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Local Search").path)
@@ -296,20 +326,42 @@ final class SearchStore: ObservableObject {
         do {
             let data = try await request("/status")
             status = try JSONDecoder().decode(ServiceStatus.self, from: data)
+            connected = true
             if !sourceID.isEmpty && !(status?.sources.contains { $0.id == sourceID } ?? false) { sourceID = "" }
-        } catch { if !silent { self.error = error.localizedDescription } }
+        } catch {
+            connected = false
+            if !silent { self.error = error.localizedDescription }
+        }
     }
+    func retry() async {
+        error = nil
+        if process?.isRunning == true { await refresh() } else { await start() }
+        if connected != true { await refresh(silent: true) }
+    }
+    // Each search supersedes the previous one; a slower, older reply never replaces newer results.
     func search() async {
-        guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        let text = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        searchGeneration += 1
+        let generation = searchGeneration
         busy = true; error = nil
-        defer { busy = false }
+        defer { if generation == searchGeneration { busy = false } }
         do {
-            let data = try await request("/search", method: "POST", body: ["query": query, "source_id": sourceID, "asset_kind": assetKind, "limit": 20, "max_chars": 45000])
+            let data = try await request("/search", method: "POST", body: ["query": text, "source_id": sourceID, "asset_kind": assetKind, "limit": 20, "max_chars": 45000])
             let reply = try JSONDecoder().decode(SearchReply.self, from: data)
-            results = reply.results; selected = results.first?.id; latency = reply.elapsed_ms
+            guard generation == searchGeneration else { return }
+            results = reply.results; selected = nil; latency = reply.elapsed_ms
             if let issue = reply.issues.first { error = issue.error }
             else if !reply.stale_paths.isEmpty { error = L10n.string("search.stale") }
-        } catch { self.error = error.localizedDescription }
+        } catch { if generation == searchGeneration { self.error = error.localizedDescription } }
+    }
+    func clearResults() {
+        searchGeneration += 1
+        busy = false; results = []; selected = nil; latency = nil
+    }
+    func filtersChanged() {
+        guard latency != nil || busy else { return }
+        if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { clearResults() } else { Task { await search() } }
     }
     func chooseFolder() {
         let panel = NSOpenPanel()
@@ -333,14 +385,14 @@ final class SearchStore: ObservableObject {
             await refresh()
         } catch { self.error = error.localizedDescription }
     }
-    func reindex() async {
-        do { _ = try await request("/reindex", method: "POST", params: ["source_id": sourceID]); await refresh() }
+    func reindex(sourceID: String? = nil) async {
+        do { _ = try await request("/reindex", method: "POST", params: ["source_id": sourceID ?? self.sourceID]); await refresh() }
         catch { self.error = error.localizedDescription }
     }
     func saveSettings(_ options: ModelOptions) async -> Bool {
         do {
             _ = try await request("/settings", method: "PUT", body: options.body)
-            results = []; selected = nil; latency = nil; error = nil
+            clearResults(); error = nil
             await refresh()
             return true
         } catch { self.error = error.localizedDescription; return false }
@@ -357,33 +409,58 @@ final class SearchStore: ObservableObject {
     }
 }
 
+extension Color {
+    /// Brand teal, lightened in dark mode so icons and highlights keep their contrast.
+    static let brand = Color(nsColor: NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(red: 0.38, green: 0.76, blue: 0.67, alpha: 1) : NSColor(red: 0.12, green: 0.40, blue: 0.35, alpha: 1)
+    })
+}
+
+extension Source {
+    func statusColor(connected: Bool?) -> Color {
+        guard connected != false else { return .secondary }
+        return phase == "ready" ? .green : phase == "error" ? .red : .orange
+    }
+    func statusLine(connected: Bool?) -> String {
+        if connected == false { return L10n.string("phase.offline") }
+        if phase == "ready", let date = indexedAt { return L10n.string("source.status", L10n.string("count.files", files), L10n.indexed(date)) }
+        return L10n.string("source.status", phaseLabel, L10n.string("count.files", files))
+    }
+}
+
+func copyToPasteboard(_ value: String) {
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(value, forType: .string)
+}
+
 struct SetupView: View {
     @ObservedObject var store = SearchStore.shared
     var updating: Bool { store.engineInstalled && !store.engineReady && store.modelReady }
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
             HStack(spacing: 14) {
-                Image(systemName: "sparkle.magnifyingglass").font(.system(size: 38)).foregroundStyle(Color.accentColor)
+                Image(systemName: "sparkle.magnifyingglass").font(.system(size: 38)).foregroundStyle(.tint)
                 VStack(alignment: .leading, spacing: 4) {
                     Text(L10n.string(updating ? "setup.updated" : "setup.welcome")).font(.largeTitle.bold())
-                    Text(L10n.string("setup.tagline")).foregroundStyle(.secondary)
+                    Text(L10n.string("setup.tagline")).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
             }
-            Text(L10n.string(updating ? "setup.updateIntro" : "setup.intro"))
+            Text(L10n.string(updating ? "setup.updateIntro" : "setup.intro")).fixedSize(horizontal: false, vertical: true)
             VStack(spacing: 0) {
                 row(icon: "shippingbox", title: L10n.string("setup.engine"), detail: L10n.string("setup.engine.detail"), ready: store.engineReady)
                 Divider().padding(.leading, 52)
                 row(icon: "cpu", title: L10n.string("setup.model"), detail: store.model == store.defaultModel.path || !store.modelReady ? L10n.string("setup.model.detail") : store.model, ready: store.modelReady) {
                     if !store.modelReady && !store.setupRunning { Button(L10n.string("setup.model.choose")) { store.chooseModelFolder() }.buttonStyle(.link).font(.caption) }
                 }
-            }.background(Color.secondary.opacity(0.07), in: RoundedRectangle(cornerRadius: 12))
+            }.background(.quinary, in: RoundedRectangle(cornerRadius: 12))
             if store.setupRunning {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(store.setupStep).font(.callout)
                     if let fraction = store.setupFraction { ProgressView(value: fraction) } else { ProgressView().progressViewStyle(.linear) }
                 }
             }
-            if let error = store.setupError { Text(error).font(.callout).foregroundStyle(.orange).textSelection(.enabled) }
+            if let error = store.setupError { Banner(text: error) }
             HStack {
                 if FileManager.default.fileExists(atPath: store.setupLog.path) {
                     Button(L10n.string("setup.showLog")) { NSWorkspace.shared.open(store.setupLog) }
@@ -396,13 +473,13 @@ struct SetupView: View {
                 }
             }
             Text(L10n.string("setup.footer"))
-                .font(.caption).foregroundStyle(.secondary)
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }.padding(40).frame(maxWidth: 640).frame(maxWidth: .infinity, maxHeight: .infinity)
-            .frame(minWidth: 1020, minHeight: 650)
+            .frame(minWidth: 960, minHeight: 600)
     }
     func row(icon: String, title: String, detail: String, ready: Bool, @ViewBuilder extra: () -> some View = { EmptyView() }) -> some View {
         HStack(alignment: .top, spacing: 14) {
-            Image(systemName: icon).font(.title2).foregroundStyle(Color.accentColor).frame(width: 24)
+            Image(systemName: icon).font(.title2).foregroundStyle(.tint).frame(width: 24)
             VStack(alignment: .leading, spacing: 4) {
                 Text(title).font(.headline)
                 Text(detail).font(.caption).foregroundStyle(.secondary).lineLimit(2).truncationMode(.middle)
@@ -419,147 +496,634 @@ struct RootView: View {
     var body: some View { if store.setupNeeded { SetupView() } else { MainView() } }
 }
 
+/// Inline, selectable warning used for service, search and form errors.
+struct Banner: View {
+    let text: String
+    var dismiss: (() -> Void)?
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+            Text(text).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+            if let dismiss { Button(action: dismiss) { Image(systemName: "xmark") }.buttonStyle(.borderless).foregroundStyle(.secondary).help(L10n.string("action.close")) }
+        }
+        .font(.callout).padding(.horizontal, 12).padding(.vertical, 9)
+        .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+/// Search-first window: a centered search on launch, then a column of result cards.
+/// The preview opens in an inspector on demand; folder management lives in its own sheet.
 struct MainView: View {
     @ObservedObject var store = SearchStore.shared
     @ObservedObject var localization = AppLocalization.shared
     @FocusState var searchFocus: Bool
-    @State var removing: Source?
-    @State var managing: Source?
+    @State var showFolders = false
+    @State var showScope = false
+    var sources: [Source] { store.status?.sources ?? [] }
+    var selectedSource: Source? { sources.first { $0.id == store.sourceID } }
+    var home: Bool { store.results.isEmpty && store.latency == nil && !store.busy }
+
     var body: some View {
-        NavigationSplitView {
-            VStack(alignment: .leading, spacing: 20) {
-                HStack(spacing: 10) {
-                    Image(systemName: "sparkle.magnifyingglass").font(.system(size: 27)).foregroundStyle(Color.accentColor)
-                    VStack(alignment: .leading) { Text("Local Search").font(.title3.bold()); Text(L10n.string("app.tagline")).font(.caption).foregroundStyle(.secondary) }
-                }.padding(.top, 14)
-                Button { store.sourceID = "" } label: { Label(L10n.string("source.all"), systemImage: "square.stack.3d.up") }.buttonStyle(.plain)
-                HStack { Text(L10n.string("source.authorized")).font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary); Spacer(); Button { store.chooseFolder() } label: { Image(systemName: "plus") }.buttonStyle(.plain).help(L10n.string("action.addFolder")) }
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 8) {
-                        ForEach(store.status?.sources ?? []) { source in
-                            Button { store.sourceID = source.id } label: {
-                                HStack(alignment: .top, spacing: 9) {
-                                    Image(systemName: "folder").foregroundStyle(Color.accentColor).padding(.top, 2)
-                                    VStack(alignment: .leading, spacing: 5) {
-                                        Text(source.name).font(.system(size: 13, weight: .medium)).lineLimit(1)
-                                        HStack(spacing: 5) {
-                                            Circle().fill(source.phase == "ready" ? Color.green : source.phase == "error" ? .red : .orange).frame(width: 5, height: 5)
-                                            Text(L10n.string("source.status", source.phaseLabel, L10n.string("count.files", source.files))).font(.caption2).foregroundStyle(.secondary)
-                                        }
-                                    }
-                                    Spacer(minLength: 0)
-                                }.padding(10).background(store.sourceID == source.id ? Color.accentColor.opacity(0.10) : Color.clear, in: RoundedRectangle(cornerRadius: 9))
-                            }.buttonStyle(.plain).contextMenu {
-                                Text(source.path)
-                                Text(source.kinds.map { L10n.assetKind($0) }.joined(separator: ", "))
-                                if let error = source.error { Text(error) }
-                                Button(L10n.string("action.manageAccess.more")) { managing = source }
-                                Button(L10n.string("action.reveal")) { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: source.path)]) }
-                                Button(L10n.string("action.revoke.more"), role: .destructive) { removing = source }
-                            }
-                        }
-                    }
+        content
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color(nsColor: .textBackgroundColor))
+            .animation(.snappy(duration: 0.25), value: home)
+            .inspector(isPresented: Binding(get: { store.selectedHit != nil }, set: { if !$0 { store.selected = nil } })) {
+                Group {
+                    if let hit = store.selectedHit { ResultDetail(hit: hit).id(hit.id) }
+                    else { Color.clear }
+                }.inspectorColumnWidth(min: 360, ideal: 480, max: 760)
+            }
+            .frame(minWidth: 820, minHeight: 560)
+            .navigationTitle("Local Search")
+            .toolbar {
+                ToolbarItem(placement: .navigation) { EngineStatus() }
+                ToolbarItemGroup(placement: .primaryAction) {
+                    Button { showFolders = true } label: { Label(L10n.string("source.folders"), systemImage: "folder") }
+                        .labelStyle(.titleAndIcon).help(L10n.string("folders.manage"))
+                    Button { store.showConnections = true } label: { Label(L10n.string("assistant.connect"), systemImage: "point.3.connected.trianglepath.dotted") }
+                        .labelStyle(.titleAndIcon).help(L10n.string("assistant.connect"))
+                    SettingsLink { Label(L10n.string("settings.title"), systemImage: "gearshape") }.help(L10n.string("settings.title"))
                 }
-                Spacer(minLength: 0)
-                Divider()
-                SettingsLink { Label(L10n.string("settings.title"), systemImage: "gearshape") }.buttonStyle(.plain)
-                Button { store.showConnections = true } label: { Label(L10n.string("assistant.connect"), systemImage: "point.3.connected.trianglepath.dotted") }.buttonStyle(.plain)
-                VStack(alignment: .leading, spacing: 5) {
-                    Label(L10n.string("index.local"), systemImage: "lock.shield").font(.caption.bold())
-                    Text(L10n.string("source.status", L10n.string("count.items", store.status?.chunks ?? 0), store.status?.device.uppercased() ?? L10n.string("index.starting"))).font(.caption2).foregroundStyle(.secondary)
-                }
-            }.padding(18).frame(minWidth: 230).background(Color(nsColor: .windowBackgroundColor))
-        } detail: {
+            }
+            .sheet(isPresented: $showFolders) { FoldersView() }
+            .sheet(isPresented: $store.showConnections) { ConnectionsView() }
+            .sheet(isPresented: Binding(get: { store.addingPath != nil && !showFolders }, set: { if !$0 { store.addingPath = nil } })) {
+                if let path = store.addingPath { AddSourceView(path: path) }
+            }
+            .onAppear { searchFocus = true }
+            .background(Button("") { searchFocus = true }.keyboardShortcut("k").hidden())
+    }
+
+    @ViewBuilder var content: some View {
+        if store.connected == nil {
+            ProgressView(L10n.string("engine.starting"))
+        } else if store.connected == false && store.status == nil {
+            ContentUnavailableView {
+                Label(L10n.string("engine.offline.title"), systemImage: "bolt.horizontal.circle")
+            } description: {
+                Text(L10n.string("engine.offline.description"))
+            } actions: {
+                Button(L10n.string("action.retry")) { Task { await store.retry() } }.buttonStyle(.borderedProminent)
+                Button(L10n.string("setup.showLog")) { NSWorkspace.shared.open(store.state.appendingPathComponent("service.log")) }
+            }
+        } else if sources.isEmpty {
+            ContentUnavailableView {
+                Label(L10n.string("source.empty.title"), systemImage: "folder.badge.plus")
+            } description: {
+                Text(L10n.string("source.empty.description"))
+            } actions: { Button(L10n.string("action.addFolder.more")) { store.chooseFolder() }.buttonStyle(.borderedProminent) }
+        } else if home {
+            hero
+        } else {
             VStack(spacing: 0) {
-                VStack(alignment: .leading, spacing: 14) {
-                    HStack { Text(L10n.string("search.heading")).font(.system(size: 22, weight: .semibold)); Spacer() }
-                    HStack(spacing: 12) {
-                        Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                        TextField(L10n.string("search.placeholder"), text: $store.query).textFieldStyle(.plain).focused($searchFocus).onSubmit { Task { await store.search() } }
-                        if store.busy { ProgressView().controlSize(.small) }
-                        Button(L10n.string("action.search")) { Task { await store.search() } }.buttonStyle(.borderedProminent).disabled(store.busy || store.query.isEmpty)
-                    }.padding(12).background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12)).overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.primary.opacity(0.08)))
-                    HStack {
-                        Picker(L10n.string("search.type"), selection: $store.assetKind) {
-                            Text(L10n.string("type.all")).tag(""); Text(L10n.string("type.code")).tag("code"); Text(L10n.string("type.documents")).tag("documents"); Text(L10n.string("type.images")).tag("images")
-                        }.pickerStyle(.segmented).frame(maxWidth: 390)
-                        Spacer()
-                        if let latency = store.latency { Text(L10n.string("search.summary", L10n.string("count.results", store.results.count), Int(latency))).font(.caption).foregroundStyle(.secondary) }
-                    }
-                    if let error = store.error { Text(error).font(.caption).foregroundStyle(.orange).textSelection(.enabled) }
-                }.padding(24)
+                VStack(alignment: .leading, spacing: 10) {
+                    searchField(large: false)
+                    HStack { filters; Spacer(); summary }
+                    if let error = store.error { Banner(text: error) { store.error = nil } }
+                }
+                .frame(maxWidth: 820).padding(.horizontal, 24).padding(.vertical, 14).frame(maxWidth: .infinity)
                 Divider()
-                if store.status?.sources.isEmpty ?? true {
-                    ContentUnavailableView {
-                        Label(L10n.string("source.empty.title"), systemImage: "folder.badge.plus")
-                    } description: {
-                        Text(L10n.string("source.empty.description"))
-                    } actions: { Button(L10n.string("action.addFolder")) { store.chooseFolder() }.buttonStyle(.borderedProminent) }
-                } else if store.results.isEmpty {
-                    ContentUnavailableView {
-                        Label(store.latency == nil ? L10n.string("search.empty.title") : L10n.string("search.noResults.title"), systemImage: "sparkle.magnifyingglass")
-                    } description: {
-                        Text(store.latency == nil ? L10n.string("search.examples") : L10n.string("search.noResults.description"))
-                    }
-                } else {
-                    HSplitView {
-                        List(selection: $store.selected) {
-                            ForEach(store.results) { hit in
-                                HStack(alignment: .top, spacing: 11) {
-                                    Image(systemName: hit.asset_kind == "images" ? "photo" : hit.asset_kind == "code" ? "chevron.left.forwardslash.chevron.right" : "doc.text").foregroundStyle(Color.accentColor).frame(width: 20).padding(.top, 2)
-                                    VStack(alignment: .leading, spacing: 6) {
-                                        Text(hit.symbol).font(.system(size: 13, weight: .semibold)).lineLimit(2)
-                                        Text(hit.path).font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary).lineLimit(2)
-                                        Text(hit.source_name).font(.caption2).foregroundStyle(.secondary)
-                                    }
-                                }.padding(.vertical, 8).tag(hit.id)
-                            }
-                        }.listStyle(.inset).frame(minWidth: 260, idealWidth: 310)
-                        if let hit = store.selectedHit { ResultDetail(hit: hit).id(hit.id).frame(minWidth: 320) }
-                        else { Text(L10n.string("search.selectResult")).foregroundStyle(.secondary).frame(maxWidth: .infinity, maxHeight: .infinity) }
-                    }
-                }
-            }.background(Color(nsColor: .textBackgroundColor))
-        }
-        .navigationSplitViewStyle(.balanced)
-        .frame(minWidth: 1020, minHeight: 650)
-        .toolbar {
-            ToolbarItemGroup {
-                if let source = store.status?.sources.first(where: { $0.id == store.sourceID }) {
-                    Button { managing = source } label: { Label(L10n.string("action.manageAccess"), systemImage: "slider.horizontal.3") }
-                }
-                Button { store.chooseFolder() } label: { Label(L10n.string("action.add"), systemImage: "folder.badge.plus") }
-                Button { Task { await store.reindex() } } label: { Label(L10n.string("action.refresh"), systemImage: "arrow.clockwise") }
-                Button { store.showConnections = true } label: { Label("MCP", systemImage: "point.3.connected.trianglepath.dotted") }
+                ResultsFeed(showSource: store.sourceID.isEmpty && sources.count > 1)
             }
         }
-        .sheet(isPresented: $store.showConnections) { ConnectionsView() }
-        .sheet(item: $managing) { source in
-            VStack(alignment: .leading, spacing: 18) {
-                Text(source.name).font(.title2.bold())
-                Text(source.path).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
-                Text(L10n.string("source.types", source.kinds.map { L10n.assetKind($0) }.joined(separator: ", ")))
-                Text(L10n.string("source.summary", source.phaseLabel, L10n.string("count.files", source.files), L10n.string("count.items", source.chunks))).foregroundStyle(.secondary)
-                if !source.excludes.isEmpty { Text(L10n.string("source.exclusions") + "\n" + source.excludes.joined(separator: "\n")).font(.system(.caption, design: .monospaced)).textSelection(.enabled) }
-                if let error = source.error { Text(error).font(.caption).foregroundStyle(.orange) }
-                if let skipped = source.last_sync?.skipped_files, !skipped.isEmpty {
-                    Text(L10n.string("count.unreadableFiles", skipped.count)).font(.headline)
-                    ScrollView { Text(skipped.prefix(10).map { "\($0.path) : \($0.error)" }.joined(separator: "\n")).font(.caption).textSelection(.enabled) }.frame(maxHeight: 120)
+    }
+
+    var hero: some View {
+        VStack(spacing: 24) {
+            Spacer()
+            VStack(spacing: 10) {
+                Image(systemName: "sparkle.magnifyingglass").font(.system(size: 46, weight: .light)).foregroundStyle(.tint)
+                Text(L10n.string("home.title")).font(.system(size: 30, weight: .semibold))
+                Text(L10n.string("home.subtitle")).font(.title3).foregroundStyle(.secondary).multilineTextAlignment(.center)
+            }
+            VStack(spacing: 14) {
+                searchField(large: true)
+                filters
+                if let error = store.error { Banner(text: error) { store.error = nil } }
+            }.frame(maxWidth: 660)
+            VStack(spacing: 10) {
+                Text(L10n.string("search.try")).font(.caption).foregroundStyle(.secondary)
+                HStack(spacing: 8) {
+                    ForEach(["search.example1", "search.example2", "search.example3"], id: \.self) { key in
+                        Chip(title: L10n.string(key), selected: false) { store.query = L10n.string(key); Task { await store.search() } }
+                    }
                 }
-                Text(L10n.string("source.changeHelp")).font(.caption).foregroundStyle(.secondary)
-                HStack {
-                    Button(L10n.string("action.revoke.more"), role: .destructive) { managing = nil; removing = source }
-                    Spacer(); Button(L10n.string("action.close")) { managing = nil }.keyboardShortcut(.cancelAction)
-                }
-            }.padding(28).frame(width: 550)
+            }
+            Spacer(); Spacer()
         }
-        .sheet(isPresented: Binding(get: { store.addingPath != nil }, set: { if !$0 { store.addingPath = nil } })) { if let path = store.addingPath { AddSourceView(path: path) } }
+        .padding(40)
+    }
+
+    func searchField(large: Bool) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "magnifyingglass").font(large ? .title2 : .title3).foregroundStyle(.secondary)
+            TextField(L10n.string("search.placeholder"), text: $store.query)
+                .textFieldStyle(.plain).font(large ? .title2 : .title3).focused($searchFocus)
+                .onSubmit { Task { await store.search() } }
+            if store.busy { ProgressView().controlSize(.small) }
+            else if !store.query.isEmpty {
+                Button { store.query = ""; store.clearResults(); searchFocus = true } label: { Image(systemName: "xmark.circle.fill") }
+                    .buttonStyle(.borderless).foregroundStyle(.tertiary).help(L10n.string("search.clear"))
+            }
+        }
+        .padding(.horizontal, large ? 18 : 14).padding(.vertical, large ? 15 : 10)
+        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: large ? 16 : 10))
+        .overlay(RoundedRectangle(cornerRadius: large ? 16 : 10).strokeBorder(searchFocus ? AnyShapeStyle(.tint.opacity(0.7)) : AnyShapeStyle(Color.primary.opacity(0.12)), lineWidth: searchFocus ? 2 : 1))
+        .shadow(color: .black.opacity(large ? 0.08 : 0), radius: 12, y: 4)
+    }
+
+    var filters: some View {
+        HStack(spacing: 8) {
+            Chip(title: selectedSource?.name ?? L10n.string("source.all"), icon: "folder", selected: selectedSource != nil, menu: true) { showScope.toggle() }
+                .popover(isPresented: $showScope, arrowEdge: .bottom) { scopePicker }
+            Divider().frame(height: 16)
+            ForEach([("", "type.all", "square.grid.2x2"), ("code", "type.code", "chevron.left.forwardslash.chevron.right"),
+                     ("documents", "type.documents", "doc.text"), ("images", "type.images", "photo")], id: \.0) { kind, key, icon in
+                Chip(title: L10n.string(key), icon: icon, selected: store.assetKind == kind) { store.assetKind = kind }
+            }
+        }
+    }
+
+    @ViewBuilder var summary: some View {
+        if let latency = store.latency {
+            Text(L10n.string("search.summary", L10n.string("count.results", store.results.count), Int(latency)))
+                .font(.caption).foregroundStyle(.secondary).monospacedDigit()
+        }
+    }
+
+    var scopePicker: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            scopeRow(id: "", title: L10n.string("source.all"), detail: L10n.string("count.files", store.status?.files ?? 0), color: nil)
+            Divider().padding(.vertical, 4)
+            ForEach(sources) { source in
+                scopeRow(id: source.id, title: source.name, detail: source.statusLine(connected: store.connected), color: source.statusColor(connected: store.connected))
+            }
+            Divider().padding(.vertical, 4)
+            Button { showScope = false; showFolders = true } label: {
+                Label(L10n.string("folders.manage"), systemImage: "slider.horizontal.3").frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 8).padding(.vertical, 5).contentShape(Rectangle())
+            }.buttonStyle(.plain)
+        }
+        .padding(8).frame(width: 300)
+    }
+
+    func scopeRow(id: String, title: String, detail: String, color: Color?) -> some View {
+        Button { store.sourceID = id; showScope = false } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "checkmark").font(.caption.bold()).foregroundStyle(.tint).opacity(store.sourceID == id ? 1 : 0)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title).lineLimit(1)
+                    HStack(spacing: 5) {
+                        if let color { Circle().fill(color).frame(width: 6, height: 6) }
+                        Text(detail).lineLimit(1)
+                    }.font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 8).padding(.vertical, 5).contentShape(Rectangle())
+        }.buttonStyle(.plain)
+    }
+}
+
+/// Capsule filter used for scope, types and example queries.
+struct Chip: View {
+    let title: String
+    var icon: String?
+    let selected: Bool
+    var menu = false
+    let action: () -> Void
+    @State var hovering = false
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                if let icon { Image(systemName: icon).font(.caption) }
+                Text(title).lineLimit(1)
+                if menu { Image(systemName: "chevron.down").font(.caption2.weight(.semibold)).foregroundStyle(.secondary) }
+            }
+            .font(.callout)
+            .padding(.horizontal, 11).padding(.vertical, 5)
+            .foregroundStyle(selected ? AnyShapeStyle(.tint) : AnyShapeStyle(.primary))
+            .background(selected ? AnyShapeStyle(.tint.opacity(0.14)) : AnyShapeStyle(Color.primary.opacity(hovering ? 0.09 : 0.05)), in: Capsule())
+            .overlay(Capsule().strokeBorder(selected ? AnyShapeStyle(.tint.opacity(0.35)) : AnyShapeStyle(Color.clear)))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+    }
+}
+
+struct EngineStatus: View {
+    @ObservedObject var store = SearchStore.shared
+    @ObservedObject var localization = AppLocalization.shared
+    var body: some View {
+        HStack(spacing: 6) {
+            Circle().fill(store.connected == true ? Color.green : store.connected == false ? .red : .orange).frame(width: 7, height: 7)
+            if store.connected == true, let status = store.status {
+                Text(L10n.string("source.status", L10n.string("count.items", status.chunks), status.device.uppercased()))
+            } else {
+                Text(L10n.string(store.connected == false ? "engine.offline" : "engine.connecting"))
+            }
+            if store.connected == false {
+                Button(L10n.string("action.retry")) { Task { await store.retry() } }.controlSize(.small)
+            }
+        }
+        .font(.caption).foregroundStyle(.secondary).fixedSize()
+        .padding(.horizontal, 8)
+        .help(L10n.string("index.local"))
+    }
+}
+
+struct ResultsFeed: View {
+    let showSource: Bool
+    @ObservedObject var store = SearchStore.shared
+    var images: [Hit] { store.results.filter(\.isImage) }
+    var texts: [Hit] { store.results.filter { !$0.isImage } }
+    var body: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 10) {
+                if store.results.isEmpty && !store.busy {
+                    VStack(spacing: 6) {
+                        Text(L10n.string("search.noResults.title")).font(.title3.weight(.semibold))
+                        Text(L10n.string("search.noResults.description")).foregroundStyle(.secondary)
+                    }.frame(maxWidth: .infinity).padding(.top, 60)
+                }
+                if !images.isEmpty {
+                    if !texts.isEmpty { Text(L10n.string("type.images")).font(.headline).padding(.top, 4) }
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 136, maximum: 200), spacing: 12)], alignment: .leading, spacing: 12) {
+                        ForEach(images) { hit in ImageTile(hit: hit, selected: store.selected == hit.id) }
+                    }.padding(.bottom, texts.isEmpty ? 0 : 10)
+                    if !texts.isEmpty { Text(L10n.string("search.textResults")).font(.headline) }
+                }
+                ForEach(texts) { hit in ResultCard(hit: hit, selected: store.selected == hit.id, showSource: showSource) }
+            }
+            .frame(maxWidth: 820).padding(.horizontal, 24).padding(.vertical, 18).frame(maxWidth: .infinity)
+        }
+    }
+}
+
+/// Click selects (and opens the preview); a double-click opens the file.
+@MainActor func handleClick(on hit: Hit) {
+    if NSApp.currentEvent?.clickCount == 2 { NSWorkspace.shared.open(hit.url) }
+    else { SearchStore.shared.selected = SearchStore.shared.selected == hit.id ? nil : hit.id }
+}
+
+struct ResultCard: View {
+    let hit: Hit
+    let selected: Bool
+    let showSource: Bool
+    @State var hovering = false
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 6) {
+                Image(systemName: hit.icon).font(.caption).foregroundStyle(.tint)
+                Text(showSource ? "\(hit.source_name) › \(hit.path)" : hit.path)
+                    .font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                Spacer(minLength: 8)
+                Text(L10n.string("preview.lines", hit.start_line, hit.end_line)).font(.caption2).foregroundStyle(.tertiary).monospacedDigit()
+            }
+            Text(hit.title).font(.headline).lineLimit(1)
+            if hit.asset_kind == "code" {
+                VStack(alignment: .leading, spacing: 1) {
+                    ForEach(Array(hit.excerpt(lines: 4).enumerated()), id: \.offset) { _, line in
+                        Text(line.isEmpty ? " " : line).lineLimit(1)
+                    }
+                }
+                .font(.system(size: 11.5, design: .monospaced)).foregroundStyle(.secondary)
+                .padding(10).frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 8))
+            } else {
+                Text(hit.prose).font(.callout).foregroundStyle(.secondary).lineLimit(3)
+            }
+            if hit.copyCount > 0 {
+                Label(L10n.string("count.copies", hit.copyCount), systemImage: "doc.on.doc").font(.caption2).foregroundStyle(.tertiary)
+            }
+        }
+        .padding(14)
+        .background(RoundedRectangle(cornerRadius: 12).fill(selected ? AnyShapeStyle(.tint.opacity(0.07)) : AnyShapeStyle(Color.primary.opacity(hovering ? 0.03 : 0))))
+        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(selected ? AnyShapeStyle(.tint.opacity(0.55)) : AnyShapeStyle(Color.primary.opacity(0.09)), lineWidth: selected ? 1.5 : 1))
+        .contentShape(RoundedRectangle(cornerRadius: 12))
+        .onHover { hovering = $0 }
+        .onTapGesture { handleClick(on: hit) }
+        .contextMenu { HitActions(hit: hit) }
+    }
+}
+
+struct ImageTile: View {
+    let hit: Hit
+    let selected: Bool
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Thumbnail(hit: hit)
+                .frame(height: 104).frame(maxWidth: .infinity)
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(selected ? AnyShapeStyle(.tint) : AnyShapeStyle(Color.primary.opacity(0.1)), lineWidth: selected ? 2.5 : 1))
+            Text(hit.title).font(.caption).lineLimit(1).truncationMode(.middle)
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { handleClick(on: hit) }
+        .contextMenu { HitActions(hit: hit) }
+    }
+}
+
+struct HitActions: View {
+    let hit: Hit
+    var body: some View {
+        Button(L10n.string("action.open")) { NSWorkspace.shared.open(hit.url) }
+        Button(L10n.string("action.reveal")) { NSWorkspace.shared.activateFileViewerSelecting([hit.url]) }
+        Divider()
+        Button(L10n.string("action.copyPath")) { copyToPasteboard(hit.url.path) }
+        if !hit.isImage { Button(L10n.string("action.copySnippet")) { copyToPasteboard(hit.code) } }
+    }
+}
+
+/// Image preview loaded from the service, cached for the session by file content.
+struct Thumbnail: View {
+    let hit: Hit
+    @State var image: NSImage?
+    @MainActor static var cache: [String: NSImage] = [:]
+    var body: some View {
+        Rectangle().fill(.tint.opacity(0.08))
+            .overlay {
+                if let image { Image(nsImage: image).resizable().scaledToFill() }
+                else { Image(systemName: "photo").font(.title2).foregroundStyle(.tint.opacity(0.6)) }
+            }
+            .clipped()
+            .task(id: hit.imageKey) {
+                if let cached = Self.cache[hit.imageKey] { image = cached; return }
+                if let data = try? await SearchStore.shared.request("/image", params: ["source_id": hit.source_id, "path": hit.path]),
+                   let loaded = NSImage(data: data) {
+                    if Self.cache.count >= 200 { Self.cache.removeAll() }
+                    Self.cache[hit.imageKey] = loaded; image = loaded
+                }
+            }
+    }
+}
+
+struct FoldersView: View {
+    @ObservedObject var store = SearchStore.shared
+    @ObservedObject var localization = AppLocalization.shared
+    @Environment(\.dismiss) var dismiss
+    @State var managing: Source?
+    @State var removing: Source?
+    var sources: [Source] { store.status?.sources ?? [] }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 14) {
+                Image(systemName: "folder").font(.system(size: 28)).foregroundStyle(.tint)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(L10n.string("source.folders")).font(.title2.bold())
+                    Text(L10n.string("folders.subtitle")).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            ScrollView {
+                VStack(spacing: 0) {
+                    if sources.isEmpty {
+                        Text(L10n.string("source.empty.description")).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading).padding(14)
+                    }
+                    ForEach(sources) { source in
+                        row(source)
+                        if source.id != sources.last?.id { Divider().padding(.leading, 50) }
+                    }
+                }
+            }
+            .background(.quinary, in: RoundedRectangle(cornerRadius: 10))
+            HStack {
+                Button(L10n.string("action.addFolder.more")) { store.chooseFolder() }.buttonStyle(.borderedProminent)
+                Spacer()
+                Button(L10n.string("action.close")) { dismiss() }.keyboardShortcut(.cancelAction)
+            }
+        }
+        .padding(24).frame(width: 600, height: 400)
+        .sheet(item: $managing) { source in SourceDetailsView(source: source, removing: $removing) }
+        .sheet(isPresented: Binding(get: { store.addingPath != nil }, set: { if !$0 { store.addingPath = nil } })) {
+            if let path = store.addingPath { AddSourceView(path: path) }
+        }
         .alert(L10n.string("source.revoke.title"), isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } })) {
             Button(L10n.string("action.cancel"), role: .cancel) { removing = nil }
             Button(L10n.string("action.remove"), role: .destructive) { if let source = removing { Task { await store.remove(source) } }; removing = nil }
         } message: { Text(L10n.string("source.revoke.description")) }
-        .onAppear { searchFocus = true }
-        .background(Button("") { searchFocus = true }.keyboardShortcut("k").hidden())
+    }
+
+    func row(_ source: Source) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: "folder.fill").font(.title2).foregroundStyle(.tint)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(source.name).fontWeight(.medium).lineLimit(1)
+                Text(source.path).font(.caption).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.middle)
+                HStack(spacing: 5) {
+                    Circle().fill(source.statusColor(connected: store.connected)).frame(width: 6, height: 6)
+                    Text(source.statusLine(connected: store.connected)).lineLimit(1)
+                    if source.skippedCount > 0 {
+                        Label(L10n.string("count.unreadableFiles", source.skippedCount), systemImage: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange).lineLimit(1)
+                    }
+                }.font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 8)
+            Button { Task { await store.reindex(sourceID: source.id) } } label: { Image(systemName: "arrow.clockwise") }
+                .buttonStyle(.borderless).help(L10n.string("action.refresh")).disabled(store.connected != true)
+            Button { managing = source } label: { Image(systemName: "info.circle") }
+                .buttonStyle(.borderless).help(L10n.string("action.manageAccess"))
+            Menu {
+                Button(L10n.string("action.reveal")) { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: source.path)]) }
+                Divider()
+                Button(L10n.string("action.revoke.more"), role: .destructive) { removing = source }
+            } label: { Image(systemName: "ellipsis.circle") }
+                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().help(L10n.string("action.more"))
+        }
+        .padding(.horizontal, 14).padding(.vertical, 10)
+        .contextMenu {
+            Button(L10n.string("action.manageAccess.more")) { managing = source }
+            Button(L10n.string("action.reveal")) { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: source.path)]) }
+            Divider()
+            Button(L10n.string("action.revoke.more"), role: .destructive) { removing = source }
+        }
+    }
+}
+
+struct ResultDetail: View {
+    static let codeFont = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+    static let lineHeight = NSLayoutManager().defaultLineHeight(for: codeFont)
+    let hit: Hit
+    @ObservedObject var store = SearchStore.shared
+    @ObservedObject var localization = AppLocalization.shared
+    @State var image: NSImage?
+    @State var reply: FileReply?
+    @State var loading = false
+    @State var error: String?
+
+    var shownLines: Int { reply.map { $0.code.components(separatedBy: "\n").count } ?? 0 }
+    var firstLine: Int { reply?.start_line ?? hit.start_line }
+    var canShowMore: Bool {
+        guard let reply, let end = reply.end_line, let total = reply.total_lines else { return false }
+        return (firstLine > 1 || end < total) && shownLines < 300
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            header.padding(16)
+            Divider()
+            if let error { Banner(text: error).padding(12) }
+            if hit.isImage { imagePreview } else { textPreview }
+            if !hit.isImage, let reply, let end = reply.end_line {
+                Divider()
+                HStack {
+                    Text(L10n.string(hit.line_origin == "extracted_text" ? "preview.extractedRange" : "preview.range", firstLine, end, reply.total_lines ?? end))
+                        .font(.caption).foregroundStyle(.secondary).monospacedDigit()
+                    Spacer()
+                    if canShowMore {
+                        Button(L10n.string("preview.moreContext")) { Task { await load(start: max(1, firstLine - 40), lines: min(300, shownLines + 120)) } }
+                            .controlSize(.small).disabled(loading)
+                    }
+                }.padding(.horizontal, 16).padding(.vertical, 8)
+            }
+        }
+        .task { await initialLoad() }
+    }
+
+    var header: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .center, spacing: 12) {
+                Text(hit.title).font(.title3.weight(.semibold)).lineLimit(2).textSelection(.enabled)
+                Spacer(minLength: 8)
+                if !hit.isImage {
+                    Button { copyToPasteboard(hit.code) } label: { Image(systemName: "doc.on.doc") }
+                        .buttonStyle(.borderless).help(L10n.string("action.copySnippet"))
+                }
+                Menu { HitActions(hit: hit) } label: { Image(systemName: "ellipsis.circle") }
+                    .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().help(L10n.string("action.more"))
+                Button(L10n.string("action.open")) { NSWorkspace.shared.open(hit.url) }
+                Button { store.selected = nil } label: { Image(systemName: "xmark") }
+                    .buttonStyle(.borderless).foregroundStyle(.secondary).help(L10n.string("action.closePreview"))
+            }
+            Text("\(hit.source_name) › \(hit.path)").font(.callout).foregroundStyle(.secondary)
+                .lineLimit(2).truncationMode(.middle).textSelection(.enabled)
+            if hit.copyCount > 0 {
+                Label(L10n.string("count.copies", hit.copyCount), systemImage: "doc.on.doc").font(.caption).foregroundStyle(.secondary)
+                    .help((hit.duplicates ?? []).map(\.path).joined(separator: "\n"))
+            }
+        }
+    }
+
+    var imagePreview: some View {
+        Group {
+            if let image {
+                Image(nsImage: image).resizable().scaledToFit()
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .shadow(color: .black.opacity(0.12), radius: 6, y: 2)
+                    .padding(24)
+            } else if error == nil { ProgressView() }
+        }.frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    @ViewBuilder var textPreview: some View {
+        if let reply {
+            // Line numbers are only shown for text read from the file, not for the snippet fallback.
+            let numbered = reply.end_line != nil
+            let lines = shownLines
+            let gutter = (firstLine..<(firstLine + lines)).map(String.init).joined(separator: "\n")
+            // Matched lines are highlighted; surrounding lines give context.
+            let matchStart = max(hit.start_line, firstLine), matchEnd = min(hit.end_line, firstLine + lines - 1)
+            GeometryReader { proxy in
+                ScrollView([.vertical, .horizontal]) {
+                    HStack(alignment: .top, spacing: 14) {
+                        if numbered { Text(gutter).foregroundStyle(.tertiary).multilineTextAlignment(.trailing) }
+                        Text(reply.code).textSelection(.enabled)
+                    }
+                    .font(Font(Self.codeFont)).lineSpacing(0).fixedSize()
+                    .padding(.vertical, 12).padding(.horizontal, 14)
+                    .frame(minWidth: proxy.size.width, minHeight: proxy.size.height, alignment: .topLeading)
+                    .background(alignment: .topLeading) {
+                        if numbered && matchEnd >= matchStart {
+                            Rectangle().fill(.tint.opacity(0.10))
+                                .frame(height: CGFloat(matchEnd - matchStart + 1) * Self.lineHeight)
+                                .offset(y: 12 + CGFloat(matchStart - firstLine) * Self.lineHeight)
+                        }
+                    }
+                }
+            }
+        } else if error == nil {
+            ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else { Spacer() }
+    }
+
+    func initialLoad() async {
+        if hit.isImage {
+            do {
+                if let cached = Thumbnail.cache[hit.imageKey] { image = cached; return }
+                image = NSImage(data: try await store.request("/image", params: ["source_id": hit.source_id, "path": hit.path]))
+            } catch { self.error = error.localizedDescription }
+            return
+        }
+        // Start a few lines before the match and include the whole match where the service allows it.
+        let start = max(1, hit.start_line - 3)
+        await load(start: start, lines: min(300, max(80, hit.end_line - start + 21)))
+    }
+
+    func load(start: Int, lines: Int) async {
+        loading = true; defer { loading = false }
+        do {
+            let data = try await store.request("/file", params: ["source_id": hit.source_id, "path": hit.path, "start_line": String(start), "max_lines": String(lines)])
+            reply = try JSONDecoder().decode(FileReply.self, from: data)
+            error = nil
+        } catch {
+            self.error = error.localizedDescription
+            if reply == nil { reply = FileReply(code: hit.code, start_line: hit.start_line, end_line: nil, total_lines: nil) }
+        }
+    }
+}
+
+struct SourceDetailsView: View {
+    let source: Source
+    @Binding var removing: Source?
+    @Environment(\.dismiss) var dismiss
+    @ObservedObject var store = SearchStore.shared
+    @ObservedObject var localization = AppLocalization.shared
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 14) {
+                Image(systemName: "folder.fill").font(.system(size: 30)).foregroundStyle(.tint)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(source.name).font(.title2.bold())
+                    Text(source.path).font(.callout).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
+                }
+                Spacer()
+            }.padding([.horizontal, .top], 24).padding(.bottom, 8)
+            Form {
+                Section {
+                    LabeledContent(L10n.string("source.statusLabel")) {
+                        HStack(spacing: 6) { Circle().fill(source.statusColor(connected: store.connected)).frame(width: 7, height: 7); Text(store.connected == false ? L10n.string("phase.offline") : source.phaseLabel) }
+                    }
+                    LabeledContent(L10n.string("source.lastIndexed"), value: source.indexedAt.map(L10n.indexed) ?? L10n.string("source.never"))
+                    LabeledContent(L10n.string("source.contents"), value: L10n.string("source.status", L10n.string("count.files", source.files), L10n.string("count.items", source.chunks)))
+                    LabeledContent(L10n.string("source.typesLabel"), value: source.kinds.map { L10n.assetKind($0) }.joined(separator: ", "))
+                }
+                Section(L10n.string("source.exclusions")) {
+                    if source.excludes.isEmpty { Text(L10n.string("source.noExclusions")).foregroundStyle(.secondary) }
+                    else { Text(source.excludes.joined(separator: "\n")).font(.system(.callout, design: .monospaced)).textSelection(.enabled) }
+                }
+                if let error = source.error { Section { Banner(text: error) } }
+                if let skipped = source.last_sync?.skipped_files, !skipped.isEmpty {
+                    Section(L10n.string("count.unreadableFiles", skipped.count)) {
+                        ForEach(skipped.prefix(10), id: \.path) { file in
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(file.path).font(.system(.callout, design: .monospaced)).lineLimit(1).truncationMode(.middle)
+                                Text(file.error).font(.caption).foregroundStyle(.secondary)
+                            }.textSelection(.enabled)
+                        }
+                    }
+                }
+                Section { Text(L10n.string("source.changeHelp")).font(.callout).foregroundStyle(.secondary) }
+            }.formStyle(.grouped)
+            HStack {
+                Button(L10n.string("action.revoke.more"), role: .destructive) { dismiss(); removing = source }
+                Spacer()
+                Button(L10n.string("action.reveal")) { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: source.path)]) }
+                Button(L10n.string("action.close")) { dismiss() }.keyboardShortcut(.defaultAction)
+            }.padding(.horizontal, 24).padding(.bottom, 20).padding(.top, 4)
+        }.frame(width: 540, height: 580)
     }
 }
 
@@ -573,25 +1137,38 @@ struct AddSourceView: View {
     @State var images = true
     @State var excludes = ""
     @State var saving = false
+    var imagesAvailable: Bool { store.status?.image_search ?? false }
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            Text(L10n.string("folder.authorize")).font(.title2.bold())
-            Text(path.path).font(.system(.caption, design: .monospaced)).textSelection(.enabled).foregroundStyle(.secondary)
-            TextField(L10n.string("source.name"), text: $name).textFieldStyle(.roundedBorder)
-            HStack(spacing: 25) {
-                Toggle(L10n.string("type.code"), isOn: $code); Toggle(L10n.string("type.documents"), isOn: $documents)
-                Toggle(L10n.string("type.images"), isOn: $images).disabled(!(store.status?.image_search ?? false))
-            }
-            if !(store.status?.image_search ?? false) {
-                Text(L10n.string("source.enableImages")).font(.caption).foregroundStyle(.secondary)
-            }
-            Text(L10n.string("source.extraExclusions")).font(.headline)
-            Text(L10n.string("source.exclusionsHelp")).font(.caption).foregroundStyle(.secondary)
-            TextEditor(text: $excludes).font(.system(.body, design: .monospaced)).frame(height: 100).border(Color.secondary.opacity(0.25))
-            Text(L10n.string("source.scopeHelp")).font(.caption).foregroundStyle(.secondary)
-            if let error = store.error { Text(error).font(.caption).foregroundStyle(.orange) }
+        VStack(spacing: 0) {
+            HStack(spacing: 14) {
+                Image(systemName: "folder.badge.plus").font(.system(size: 28)).foregroundStyle(.tint)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(L10n.string("folder.authorize")).font(.title2.bold())
+                    Text(path.path).font(.callout).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
+                }
+                Spacer()
+            }.padding([.horizontal, .top], 24).padding(.bottom, 8)
+            Form {
+                Section {
+                    TextField(L10n.string("source.name"), text: $name)
+                }
+                Section {
+                    Toggle(isOn: $code) { Label(L10n.string("type.code"), systemImage: "chevron.left.forwardslash.chevron.right") }
+                    Toggle(isOn: $documents) { Label(L10n.string("type.documents"), systemImage: "doc.text") }
+                    Toggle(isOn: $images) { Label(L10n.string("type.images"), systemImage: "photo") }.disabled(!imagesAvailable)
+                } header: { Text(L10n.string("source.indexTypes")) } footer: {
+                    if !imagesAvailable { Text(L10n.string("source.enableImages")).font(.caption).foregroundStyle(.secondary) }
+                }
+                Section {
+                    TextEditor(text: $excludes).font(.system(.body, design: .monospaced)).frame(height: 70).scrollContentBackground(.hidden)
+                } header: { Text(L10n.string("source.extraExclusions")) } footer: {
+                    Text(L10n.string("source.exclusionsHelp")).font(.caption).foregroundStyle(.secondary)
+                }
+                Section { Text(L10n.string("source.scopeHelp")).font(.callout).foregroundStyle(.secondary) }
+            }.formStyle(.grouped)
+            if let error = store.error { Banner(text: error).padding(.horizontal, 24).padding(.bottom, 8) }
             HStack {
-                Spacer(); Button(L10n.string("action.cancel")) { store.addingPath = nil }
+                Spacer(); Button(L10n.string("action.cancel")) { store.addingPath = nil }.keyboardShortcut(.cancelAction)
                 Button(saving ? L10n.string("action.adding") : L10n.string("action.authorizeIndex")) {
                     saving = true
                     Task {
@@ -600,50 +1177,8 @@ struct AddSourceView: View {
                         saving = false
                     }
                 }.buttonStyle(.borderedProminent).disabled(saving || !(code || documents || images))
-            }
-        }.padding(28).frame(width: 560).onAppear { name = path.lastPathComponent; images = store.status?.image_search ?? false; store.error = nil }
-    }
-}
-
-struct ResultDetail: View {
-    let hit: Hit
-    @ObservedObject var store = SearchStore.shared
-    @ObservedObject var localization = AppLocalization.shared
-    @State var image: NSImage?
-    @State var text = ""
-    @State var error: String?
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack { Text(hit.symbol).font(.headline).lineLimit(2); Spacer(); Button { NSWorkspace.shared.activateFileViewerSelecting([hit.url]) } label: { Image(systemName: "folder") }.help(L10n.string("action.reveal")) }
-            Text("\(hit.source_name) / \(hit.path)").font(.system(.caption, design: .monospaced)).foregroundStyle(.secondary).textSelection(.enabled)
-            if hit.copyCount > 0 {
-                Label(L10n.string("count.copies", hit.copyCount), systemImage: "doc.on.doc").font(.caption2).foregroundStyle(.secondary)
-                    .help((hit.duplicates ?? []).map(\.path).joined(separator: "\n"))
-            }
-            if hit.asset_kind != "images" { Text(hit.line_origin == "extracted_text" ? L10n.string("preview.extractedLines", hit.start_line, hit.end_line) : L10n.string("preview.lines", hit.start_line, hit.end_line)).font(.caption2).foregroundStyle(.secondary) }
-            Divider()
-            if let error { Text(error).foregroundStyle(.orange).font(.caption) }
-            ScrollView([.vertical, .horizontal]) {
-                if hit.asset_kind == "images" {
-                    if let image { Image(nsImage: image).resizable().scaledToFit().frame(maxWidth: 650, maxHeight: 600) }
-                    else { ProgressView().padding() }
-                } else { Text(text.isEmpty ? hit.code : text).font(.system(size: 12, design: .monospaced)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }
-            }
-            Spacer(minLength: 0)
-        }.padding(22).task {
-            do {
-                if hit.asset_kind == "images" { image = NSImage(data: try await store.request("/image", params: ["source_id": hit.source_id, "path": hit.path])) }
-                else {
-                    let data: Data
-                    if hit.kind == "block" {
-                        data = try await store.request("/symbol/\(hit.rawID)", params: ["source_id": hit.source_id])
-                    } else {
-                        data = try await store.request("/file", params: ["source_id": hit.source_id, "path": hit.path, "start_line": String(hit.start_line), "max_lines": "120"])
-                    }
-                    text = try JSONDecoder().decode(FileReply.self, from: data).code
-                }
-            } catch { self.error = error.localizedDescription }
-        }
+            }.padding(.horizontal, 24).padding(.bottom, 20).padding(.top, 4)
+        }.frame(width: 540, height: 640).onAppear { name = path.lastPathComponent; images = imagesAvailable; store.error = nil }
     }
 }
 
@@ -657,8 +1192,7 @@ struct SettingsView: View {
     @State var error: String?
     var imageSources: Bool { store.status?.sources.contains { $0.kinds.contains("images") } ?? false }
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            Text(L10n.string("settings.title")).font(.title2.bold())
+        VStack(alignment: .leading, spacing: 0) {
             Form {
                 Section(L10n.string("settings.languageSection")) {
                     Picker(L10n.string("settings.language"), selection: $localization.language) {
@@ -715,26 +1249,29 @@ struct SettingsView: View {
                     Text(L10n.string("settings.queryHelp")).font(.caption).foregroundStyle(.secondary)
                 }
             }.formStyle(.grouped)
-            Text(L10n.string("settings.rebuildHelp")).font(.caption).foregroundStyle(.secondary)
-            if let error { Text(error).font(.caption).foregroundStyle(.orange) }
-            if saved { Text(L10n.string("settings.saved")).font(.caption).foregroundStyle(.secondary) }
-            HStack {
-                Button(L10n.string("action.defaults")) {
-                    let available = options.image_encoder_available
-                    options = ModelOptions(); options.image_encoder_available = available; options.images = available
-                }.disabled(!loaded)
-                Spacer()
-                if saving { ProgressView().controlSize(.small) }
-                Button(L10n.string("action.save")) {
-                    saving = true; saved = false; error = nil
-                    Task {
-                        saved = await store.saveSettings(options)
-                        if !saved { error = store.error }
-                        saving = false
-                    }
-                }.buttonStyle(.borderedProminent).disabled(saving || !loaded || !(256...8192).contains(options.max_tokens))
-            }
-        }.padding(24).frame(width: 660, height: 780)
+            Divider()
+            VStack(alignment: .leading, spacing: 10) {
+                Text(L10n.string("settings.rebuildHelp")).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                if let error { Banner(text: error) }
+                HStack {
+                    Button(L10n.string("action.defaults")) {
+                        let available = options.image_encoder_available
+                        options = ModelOptions(); options.image_encoder_available = available; options.images = available
+                    }.disabled(!loaded)
+                    Spacer()
+                    if saving { ProgressView().controlSize(.small) }
+                    if saved { Label(L10n.string("settings.saved"), systemImage: "checkmark.circle.fill").font(.callout).foregroundStyle(.green) }
+                    Button(L10n.string("action.save")) {
+                        saving = true; saved = false; error = nil
+                        Task {
+                            saved = await store.saveSettings(options)
+                            if !saved { error = store.error }
+                            saving = false
+                        }
+                    }.buttonStyle(.borderedProminent).disabled(saving || !loaded || !(256...8192).contains(options.max_tokens))
+                }
+            }.padding(.horizontal, 20).padding(.vertical, 14)
+        }.frame(width: 620, height: 720)
             .disabled(saving)
             .task {
                 await store.refresh()
@@ -750,6 +1287,7 @@ struct SettingsView: View {
             .onChange(of: options) { saved = false; error = nil }
     }
 }
+
 
 struct ConnectionsView: View {
     @ObservedObject var store = SearchStore.shared
@@ -782,47 +1320,76 @@ struct ConnectionsView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            Text(L10n.string("assistant.heading")).font(.title2.bold())
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(spacing: 14) {
+                Image(systemName: "point.3.connected.trianglepath.dotted").font(.system(size: 28)).foregroundStyle(.tint)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(L10n.string("assistant.heading")).font(.title2.bold())
+                    Text(L10n.string("assistant.scopeHelp")).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
+            }
             Picker(L10n.string("assistant.picker"), selection: $tab) {
                 Text(L10n.string("assistant.connection")).tag("connection"); Text(L10n.string("assistant.projectAccess")).tag("access")
-            }.pickerStyle(.segmented)
-            Text(L10n.string("assistant.scopeHelp")).foregroundStyle(.secondary)
-            HStack {
+            }.pickerStyle(.segmented).labelsHidden()
+            HStack(spacing: 10) {
+                Image(systemName: "folder").foregroundStyle(.secondary)
                 Text(project.isEmpty ? L10n.string("assistant.launchProject") : project)
-                    .font(.system(.caption, design: .monospaced)).textSelection(.enabled).lineLimit(3)
+                    .lineLimit(1).truncationMode(.middle).textSelection(.enabled)
                 Spacer()
+                if !project.isEmpty && tab == "connection" {
+                    Button(L10n.string("assistant.useLaunchFolder")) { project = ""; folders = []; copied = ""; error = nil; saved = false }
+                }
                 Button(L10n.string("assistant.chooseProject")) {
                     if let path = chooseFolder(title: L10n.string("assistant.chooseProject.title")) {
                         project = path; copied = ""; Task { await loadAccess() }
                     }
                 }.disabled(saving || loading)
             }
+            .padding(12).background(.quinary, in: RoundedRectangle(cornerRadius: 10))
             if tab == "connection" {
-                Text(L10n.string("assistant.commandsHelp")).font(.callout).foregroundStyle(.secondary)
-                ForEach(["codex", "claude"], id: \.self) { client in
-                    VStack(alignment: .leading, spacing: 10) {
-                        HStack { Text(client == "codex" ? "Codex" : "Claude Code").font(.headline); Spacer(); Button(copied == client ? L10n.string("action.copied") : L10n.string("action.copy")) { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(store.connectionCommand(client, project: project), forType: .string); copied = client } }
-                        Text(store.connectionCommand(client, project: project)).font(.system(size: 11, design: .monospaced)).textSelection(.enabled)
-                    }.padding(15).background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
+                Text(L10n.string("assistant.commandsHelp")).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                ForEach(["claude", "codex"], id: \.self) { client in
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Text(client == "codex" ? "Codex" : "Claude Code").font(.headline)
+                            Spacer()
+                            Button {
+                                copyToPasteboard(store.connectionCommand(client, project: project)); copied = client
+                            } label: {
+                                Label(copied == client ? L10n.string("action.copied") : L10n.string("action.copy"), systemImage: copied == client ? "checkmark" : "doc.on.doc")
+                            }.controlSize(.small)
+                        }
+                        Text(store.connectionCommand(client, project: project)).font(.system(size: 11, design: .monospaced))
+                            .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                            .padding(10).frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 6))
+                            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.primary.opacity(0.08)))
+                    }.padding(12).background(.quinary, in: RoundedRectangle(cornerRadius: 10))
                 }
-                if !project.isEmpty { Button(L10n.string("assistant.useLaunchFolder")) { project = ""; folders = []; copied = ""; error = nil; saved = false } }
             } else {
-                Text(L10n.string("assistant.extraFolders")).font(.headline)
-                Text(L10n.string("assistant.extraFoldersHelp")).font(.caption).foregroundStyle(.secondary)
-                if loading { ProgressView().controlSize(.small) }
-                else if folders.isEmpty { Text(L10n.string("assistant.projectOnly")).font(.callout).foregroundStyle(.secondary) }
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 10) {
-                        ForEach(folders, id: \.self) { path in
-                            HStack {
-                                Text(path).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
-                                Spacer()
-                                Button(L10n.string("action.remove")) { folders.removeAll { $0 == path }; saved = false; error = nil }.disabled(saving)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(L10n.string("assistant.extraFolders")).font(.headline)
+                    Text(L10n.string("assistant.extraFoldersHelp")).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
+                VStack(spacing: 0) {
+                    if project.isEmpty { placeholder(L10n.string("assistant.chooseProjectFirst")) }
+                    else if loading { ProgressView().controlSize(.small).padding(14) }
+                    else if folders.isEmpty { placeholder(L10n.string("assistant.projectOnly")) }
+                    ScrollView {
+                        VStack(spacing: 0) {
+                            ForEach(folders, id: \.self) { path in
+                                HStack {
+                                    Image(systemName: "folder").foregroundStyle(.tint)
+                                    Text(path).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
+                                    Spacer()
+                                    Button { folders.removeAll { $0 == path }; saved = false; error = nil } label: { Image(systemName: "minus.circle.fill") }
+                                        .buttonStyle(.borderless).foregroundStyle(.secondary).help(L10n.string("action.remove")).disabled(saving)
+                                }.padding(.horizontal, 12).padding(.vertical, 8)
+                                if path != folders.last { Divider().padding(.leading, 36) }
                             }
                         }
-                    }
-                }.frame(maxHeight: 150)
+                    }.frame(maxHeight: 160).fixedSize(horizontal: false, vertical: true)
+                }.background(.quinary, in: RoundedRectangle(cornerRadius: 10))
                 HStack {
                     Button(L10n.string("action.addFolder.more")) {
                         if let path = chooseFolder(title: L10n.string("assistant.authorizeFolder.title")), !folders.contains(path) {
@@ -830,6 +1397,7 @@ struct ConnectionsView: View {
                         }
                     }
                     Spacer()
+                    if saved { Label(L10n.string("assistant.accessSaved"), systemImage: "checkmark.circle.fill").font(.caption).foregroundStyle(.green) }
                     Button(saving ? L10n.string("action.saving") : L10n.string("assistant.saveAccess")) {
                         saving = true; error = nil; saved = false
                         Task {
@@ -841,13 +1409,19 @@ struct ConnectionsView: View {
                         }
                     }.buttonStyle(.borderedProminent)
                 }.disabled(project.isEmpty || saving || loading || !accessLoaded)
-                if let error { Text(error).font(.caption).foregroundStyle(.orange) }
-                if saved { Text(L10n.string("assistant.accessSaved")).font(.caption).foregroundStyle(.secondary) }
-                if project.isEmpty { Text(L10n.string("assistant.chooseProjectFirst")).font(.caption).foregroundStyle(.secondary) }
+                if let error { Banner(text: error) }
             }
-            Text(L10n.string("assistant.privacyHelp")).font(.caption).foregroundStyle(.secondary)
-            HStack { Spacer(); Button(L10n.string("action.close")) { store.showConnections = false }.keyboardShortcut(.cancelAction) }
-        }.padding(28).frame(width: 670).task { await loadAccess() }
+            Spacer(minLength: 0)
+            HStack(alignment: .firstTextBaseline) {
+                Label(L10n.string("assistant.privacyHelp"), systemImage: "lock.shield").font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                Button(L10n.string("action.close")) { store.showConnections = false }.keyboardShortcut(.cancelAction)
+            }
+        }.padding(24).frame(width: 640, height: 600).task { await loadAccess() }
+    }
+
+    func placeholder(_ text: String) -> some View {
+        Text(text).font(.callout).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading).padding(12)
     }
 }
 
@@ -882,9 +1456,9 @@ struct LocalSearchApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
     @ObservedObject var localization = AppLocalization.shared
     var body: some Scene {
-        Window("Local Search", id: "main") { RootView().environment(\.locale, localization.locale).tint(Color(red: 0.12, green: 0.40, blue: 0.35)) }
+        Window("Local Search", id: "main") { RootView().environment(\.locale, localization.locale).tint(.brand) }
             .defaultSize(width: 1180, height: 760)
             .commands { CommandGroup(after: .newItem) { Button(L10n.string("action.addFolder.more")) { SearchStore.shared.chooseFolder() }.keyboardShortcut("o") } }
-        Settings { SettingsView().environment(\.locale, localization.locale).tint(Color(red: 0.12, green: 0.40, blue: 0.35)) }
+        Settings { SettingsView().environment(\.locale, localization.locale).tint(.brand) }
     }
 }

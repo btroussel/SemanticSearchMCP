@@ -13,16 +13,21 @@ Both paths are under `~/Library/Application Support/Local Search/`. Progress, **
 
 When a new app version bundles a different backend or library lock, the setup screen offers **Update** and reinstalls the engine, reusing the uv download cache. A development build made with `scripts/build-mac-app.py --dev` skips setup and uses this checkout's `.venv` and `models/`.
 
-Choose **Add a folder / Ajouter un dossier**, select a folder in the Mac chooser, and authorize code, documents, and/or images. Exclusion patterns follow Git ignore syntax, one per line. Ordinary folders and Git repositories are supported. Saved changes are watched and reconciled every five minutes. The index persists across restarts.
+Choose **Add a folder… / Ajouter un dossier…** (on first launch, or under **Folders / Dossiers**), select a folder in the Mac chooser, and authorize code, documents, and/or images. Exclusion patterns follow Git ignore syntax, one per line. Ordinary folders and Git repositories are supported. Saved changes are watched and reconciled every five minutes. The index persists across restarts.
 
-Select a sidebar source to restrict search, choose a result-type filter, and describe what you need. Return starts a search; Command-K focuses the field. Select a result for a text/image preview; the Finder button reveals the original file. Choose **Manage access / Gérer l’accès** to inspect a selected source, its exclusions and unreadable files, or revoke access. A right-click on a source also exposes these controls.
+The window is built around search. On launch it shows a single search field; the chips below it restrict the search to one folder or to code, documents, or images. Return starts a search, replacing one still in progress; Command-K focuses the field. Changing the folder or type reruns the current search, so the results always match the filters.
 
+Results appear as cards with the file path, the matching symbol or document, and an excerpt; matching images are grouped in a thumbnail grid above them. Click a result to open its preview beside the results. Text previews show line numbers with the matching lines highlighted, and **Show more context / Afficher plus de contexte** widens the range, up to 300 lines. **Open / Ouvrir** or a double-click opens the file in its default app. The ⋯ menu and a right-click on a result also reveal it in Finder, copy its path, or copy the matching excerpt. Identical copies of a file appear once, with a count of the other copies (the preview lists their paths on hover).
+
+**Folders / Dossiers** in the toolbar lists the authorized folders, when each was last indexed, and how many files could not be read. From there you can add a folder, re-index one, open its details (exclusions and unreadable files), reveal it in Finder, or revoke access.
+
+The toolbar's status indicator shows whether the engine is responding. When it is not, sources are marked unavailable and **Try again / Réessayer** reconnects, or restarts the backend if the app's own process has stopped.
 
 ## Settings and assistants
 
-Open **Settings / Réglages** in the sidebar or press **Command-comma** to configure the shared model. See [model settings](model.md) for precision, dimensions, text limits, image detail and rebuild behavior.
+Open **Settings / Réglages** with the gear in the toolbar or press **Command-comma** to configure the shared model. See [model settings](model.md) for precision, dimensions, text limits, image detail and rebuild behavior.
 
-The **Connect an assistant / Connecter un assistant / MCP** panel provides connection commands and **Project access / Accès par projet** grants. See [MCP connection and project scope](mcp.md) before connecting an assistant. The app searches its authorized sources; MCP searches default to the assistant’s project.
+The **Connect an assistant / Connecter un assistant** panel, in the toolbar, provides connection commands and **Project access / Accès par projet** grants. See [MCP connection and project scope](mcp.md) before connecting an assistant. The app searches its authorized sources; MCP searches default to the assistant’s project.
 
 ## Interface language
 

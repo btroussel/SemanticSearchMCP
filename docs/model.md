@@ -4,7 +4,7 @@ The shared runtime uses a local EmbeddingGemma 2 checkpoint and performs inferen
 
 ## Options and tradeoffs
 
-Open **Settings** in the sidebar or press **Command-comma** to configure the shared model:
+Open **Settings** with the gear in the toolbar or press **Command-comma** to configure the shared model:
 
 | Option | Choices and default | Tradeoff |
 | --- | --- | --- |

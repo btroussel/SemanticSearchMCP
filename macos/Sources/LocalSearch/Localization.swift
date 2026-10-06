@@ -49,6 +49,14 @@ enum L10n {
     static func string(_ key: String, _ arguments: CVarArg...) -> String {
         AppLocalization.shared.format(key, arguments: arguments)
     }
+    /// "Indexed 5 min ago", in the interface language.
+    static func indexed(_ date: Date) -> String {
+        guard Date().timeIntervalSince(date) >= 60 else { return string("source.indexedNow") }
+        let formatter = RelativeDateTimeFormatter()
+        formatter.locale = AppLocalization.shared.locale
+        formatter.unitsStyle = .short
+        return string("source.indexedAgo", formatter.localizedString(for: date, relativeTo: Date()))
+    }
     static func assetKind(_ kind: String) -> String {
         switch kind {
         case "code", "documents", "images": return string("type." + kind)
